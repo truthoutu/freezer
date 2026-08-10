@@ -22,3 +22,5 @@ international_raw.json
 raw_harvest.json
 live_test_out.json
 *.log
+
+harvest_history.db
