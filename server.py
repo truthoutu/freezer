@@ -287,8 +287,9 @@ def api_harvest():
     if cerebras_key and Cerebras:
         logger.info(f"[{session_id}] 🧠 Cerebras: Extracting contacts from {len(crawled_content)} pages...")
         for model_name in ["gemma-4-31b", "gpt-oss-120b", "zai-glm-4.7"]:
-            client = Cerebras(api_key=cerebras_key)
-            prompt = f"""From the web page text below, extract contact information for individuals who appear to be real people.
+            try:
+                client = Cerebras(api_key=cerebras_key)
+                prompt = f"""From the web page text below, extract contact information for individuals who appear to be real people.
 Do NOT extract information for general businesses, government services, or hotlines.
 Only extract contacts that have a real telephone number explicitly present in the text. Extract up to {limit} contacts.
 
@@ -303,20 +304,22 @@ Return valid JSON format: {{"contacts": [{{"Name": "...", "Occupation": "...", "
 Web Page Content:
 {combined_content[:40000]}
 """
-            completion = client.chat.completions.create(
-                messages=[{"role": "user", "content": prompt}],
-                model=model_name,
-                temperature=0.1,
-                max_completion_tokens=2048,
-                response_format={"type": "json_object"}
-            )
-            ai_res = json.loads(completion.choices[0].message.content)
-            if "contacts" in ai_res and isinstance(ai_res["contacts"], list):
-                if ai_res["contacts"]:
-                    extracted_records = ai_res["contacts"]
-                    logger.info(f"[{session_id}] ⚡ Cerebras ({model_name}) extracted {len(extracted_records)} contacts in seconds")
-                    break # Success, stop trying other models
-            logger.warning(f"[{session_id}] Cerebras model {model_name} returned no contacts.")
+                completion = client.chat.completions.create(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=model_name,
+                    temperature=0.1,
+                    max_completion_tokens=2048,
+                    response_format={"type": "json_object"}
+                )
+                ai_res = json.loads(completion.choices[0].message.content)
+                if "contacts" in ai_res and isinstance(ai_res["contacts"], list):
+                    if ai_res["contacts"]:
+                        extracted_records = ai_res["contacts"]
+                        logger.info(f"[{session_id}] ⚡ Cerebras ({model_name}) extracted {len(extracted_records)} contacts in seconds")
+                        break # Success, stop trying other models
+                logger.warning(f"[{session_id}] Cerebras model {model_name} returned no contacts.")
+            except Exception as e:
+                logger.error(f"[{session_id}] Cerebras model {model_name} failed: {e}")
     
     # If Cerebras failed, try Groq (still fast)
     if not extracted_records and groq_key and Groq:

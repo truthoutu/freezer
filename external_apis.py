@@ -158,7 +158,7 @@ def verify_phone_number(phone: str, default_country_code: str = "") -> dict:
         params["country_code"] = default_country_code
 
     try:
-        resp = requests.get("https://apilayer.net/api/validate", params=params, timeout=8)
+        resp = requests.get("https://apilayer.net/api/validate", params=params, timeout=8) # Use HTTPS for security
         if resp.status_code == 200:
             data = resp.json()
             is_valid = data.get("valid", True)
@@ -177,4 +177,4 @@ def verify_phone_number(phone: str, default_country_code: str = "") -> dict:
     except Exception as e:
         logger.warning(f"Numverify check notice for {phone}: {e}")
 
-    return {"valid": True, "phone": phone, "carrier": "Verified Line", "line_type": "Mobile / Landline"}
+    return {"valid": True, "phone": phone, "carrier": "Unknown", "line_type": "Unknown"}
