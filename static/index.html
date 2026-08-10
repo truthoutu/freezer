@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Harvester - High Speed Data Intelligence</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="background-glow"></div>
+    
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header-card">
+            <div class="brand">
+                <div class="logo-icon">⚡</div>
+                <div>
+                    <h1>THE HARVESTER</h1>
+                    <p class="subtitle">Automated Contact Collection & Intelligence Pipeline</p>
+                </div>
+            </div>
+            <div class="status-badge" id="engineStatus">
+                <span class="status-dot online"></span>
+                <span>Rust Engine Active</span>
+            </div>
+        </header>
+
+        <!-- Main Search Controls -->
+        <section class="glass-card search-card">
+            <div class="card-header">
+                <h2>Target Acquisition Settings</h2>
+                <span class="badge">Automatic Directory Crawling & SOCKS5 Rotation</span>
+            </div>
+
+            <form id="searchForm" class="search-grid">
+                <div class="input-group">
+                    <label for="country">Target Country</label>
+                    <select id="country" name="country">
+                        <option value="United States">🇺🇸 United States / Canada</option>
+                        <option value="Germany" selected>🇩🇪 Germany</option>
+                        <option value="Switzerland">🇨🇭 Switzerland</option>
+                        <option value="Australia">🇦🇺 Australia</option>
+                    </select>
+                </div>
+
+                <div class="input-group">
+                    <label for="occupation">Target Occupation / Keyword</label>
+                    <input type="text" id="occupation" name="occupation" placeholder="e.g. Nurse, Realtor, Lawyer, Doctor" value="Nurse">
+                </div>
+
+                <div class="input-group">
+                    <label for="gender">Target Gender</label>
+                    <select id="gender" name="gender">
+                        <option value="Female" selected>Female</option>
+                        <option value="Male">Male</option>
+                        <option value="">Any Gender</option>
+                    </select>
+                </div>
+
+                <div class="input-group">
+                    <label for="limit">Target Limit (Numbers to Drop)</label>
+                    <input type="number" id="limit" name="limit" value="20" min="1" max="1000">
+                </div>
+
+                <div class="input-group full-width">
+                    <label for="customUrls">Custom URLs (Optional - One per line)</label>
+                    <textarea id="customUrls" name="customUrls" rows="3" placeholder="https://example-directory.com/nurses&#10;https://another-site.com/doctors&#10;Leave empty to use default directories"></textarea>
+                </div>
+
+                <div class="form-footer full-width">
+                    <div></div>
+                    <button type="submit" class="btn-primary" id="searchBtn">
+                        <span class="btn-text">⚡ Start Harvesting 20 Targets</span>
+                    </button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Results Section -->
+        <section class="glass-card results-card">
+            <div class="results-header">
+                <div>
+                    <h2>Harvested Contact Targets</h2>
+                    <p id="resultsStats">Click 'Start Harvesting' to crawl directories & extract numbers...</p>
+                </div>
+
+                <div class="export-actions">
+                    <button id="exportExcelBtn" class="btn-secondary" disabled>
+                        <span>📊 Download Excel (.xlsx)</span>
+                    </button>
+                    <button id="exportCsvBtn" class="btn-secondary" disabled>
+                        <span>📄 Download CSV</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Table -->
+            <div class="table-wrapper">
+                <table id="contactsTable">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Name</th>
+                            <th>Occupation</th>
+                            <th>Gender (Inferred)</th>
+                            <th>Phone Number</th>
+                            <th>Country</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="contactsTbody">
+                        <tr class="empty-row">
+                            <td colspan="7">No contacts harvested yet. Select options above and click <strong>Start Harvesting</strong>.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="toast hidden">Copied to clipboard!</div>
+
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+# Environment & Secrets
+.env
+proxies.txt
+
+# Rust Build Output
+/target/
+**/*.rs.bk
+
+# Python Cache & Environment
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+
+# Data & Export Artifacts
+*.csv
+*.xlsx
+web_harvest_raw.json
+international_raw.json
+raw_harvest.json
+live_test_out.json
+*.log
