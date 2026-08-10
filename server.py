@@ -249,7 +249,7 @@ Maximum {limit} contacts.
 
 Filters:
 - Country: {country}
-- Occupation: {country}
+- Occupation: {occupation}
 - Gender: {gender}
 
 Content:
