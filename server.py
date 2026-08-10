@@ -20,6 +20,7 @@ import pandas as pd
 from cleaner import CleanerPipeline
 from db import get_harvest_history, init_db, save_harvest_run
 from targets_registry import get_default_sources
+from external_apis import fetch_serpapi_urls, verify_phone_number
 
 load_dotenv()
 
@@ -118,11 +119,19 @@ def enforce_contact_schema(records: list[dict], default_country: str, default_oc
         else:
             country_val = raw_country
 
+        # Validate line status with Numverify API
+        v_res = verify_phone_number(phone)
+        if not v_res.get("valid", True):
+            logger.warning(f"Rejecting invalid phone number: {phone}")
+            continue
+
+        verified_phone = v_res.get("phone", phone)
+
         valid_records.append({
             "Name": name,
             "Occupation": occ,
             "Gender (Inferred)": gender,
-            "Phone Number": phone,
+            "Phone Number": verified_phone,
             "Country": country_val
         })
     return valid_records
@@ -214,10 +223,11 @@ def api_harvest():
         target_urls = [url for url in custom_urls if url.startswith('http')]
         logger.info(f"[{session_id}] Using {len(target_urls)} custom URLs provided by user")
     else:
-        # Use default registry
-        target_urls = get_default_sources(country, occupation)
-        if not target_urls:
-            logger.error(f"[{session_id}] No target URLs found for country={country}, occupation={occupation}")
+        # Query SerpAPI Google Search Dorking for live target URLs
+        serp_urls = fetch_serpapi_urls(country, occupation, limit=5)
+        registry_urls = get_default_sources(country, occupation)
+        target_urls = list(dict.fromkeys(serp_urls + registry_urls))
+        logger.info(f"[{session_id}] Assembled {len(target_urls)} live target URLs (SerpAPI: {len(serp_urls)}, Registry: {len(registry_urls)})")
     
     # STEP 1: Firecrawl - Parallel URL scraping with anti-bot bypass (FAST)
     crawled_content = []
