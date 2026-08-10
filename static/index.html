@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>The Harvester - High Speed Data Intelligence</title>
+    <title>The Harvester - AI-Powered Contact Search</title>
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,28 +17,28 @@
         <!-- Header -->
         <header class="header-card">
             <div class="brand">
-                <div class="logo-icon">⚡</div>
+                <div class="logo-icon">🔍</div>
                 <div>
                     <h1>THE HARVESTER</h1>
-                    <p class="subtitle">Automated Contact Collection & Intelligence Pipeline</p>
+                    <p class="subtitle">AI-Powered Contact Intelligence</p>
                 </div>
             </div>
             <div class="status-badge" id="engineStatus">
                 <span class="status-dot online"></span>
-                <span>Rust Engine Active</span>
+                <span>AI Engine Ready</span>
             </div>
         </header>
 
         <!-- Main Search Controls -->
         <section class="glass-card search-card">
             <div class="card-header">
-                <h2>Target Acquisition Settings</h2>
-                <span class="badge">Automatic Directory Crawling & SOCKS5 Rotation</span>
+                <h2>Search Settings</h2>
+                <span class="badge">AI-Powered Directory Search</span>
             </div>
 
             <form id="searchForm" class="search-grid">
                 <div class="input-group">
-                    <label for="country">Target Country</label>
+                    <label for="country">Country</label>
                     <select id="country" name="country">
                         <option value="United States">🇺🇸 United States / Canada</option>
                         <option value="Germany" selected>🇩🇪 Germany</option>
@@ -48,12 +48,12 @@
                 </div>
 
                 <div class="input-group">
-                    <label for="occupation">Target Occupation / Keyword</label>
-                    <input type="text" id="occupation" name="occupation" placeholder="e.g. Nurse, Realtor, Lawyer, Doctor" value="Nurse">
+                    <label for="occupation">Profession / Keyword</label>
+                    <input type="text" id="occupation" name="occupation" placeholder="e.g. Nurse, Doctor, Realtor" value="Nurse">
                 </div>
 
                 <div class="input-group">
-                    <label for="gender">Target Gender</label>
+                    <label for="gender">Gender</label>
                     <select id="gender" name="gender">
                         <option value="Female" selected>Female</option>
                         <option value="Male">Male</option>
@@ -62,7 +62,7 @@
                 </div>
 
                 <div class="input-group">
-                    <label for="limit">Target Limit (Numbers to Drop)</label>
+                    <label for="limit">Max Contacts to Find</label>
                     <input type="number" id="limit" name="limit" value="20" min="1" max="1000">
                 </div>
 
@@ -74,7 +74,7 @@
                 <div class="form-footer full-width">
                     <div></div>
                     <button type="submit" class="btn-primary" id="searchBtn">
-                        <span class="btn-text">⚡ Start Harvesting 20 Targets</span>
+                        <span class="btn-text">🔍 Find Contacts</span>
                     </button>
                 </div>
             </form>
@@ -84,8 +84,8 @@
         <section class="glass-card results-card">
             <div class="results-header">
                 <div>
-                    <h2>Harvested Contact Targets</h2>
-                    <p id="resultsStats">Click 'Start Harvesting' to crawl directories & extract numbers...</p>
+                    <h2>Found Contacts</h2>
+                    <p id="resultsStats">Click 'Find Contacts' to search directories and extract contact information...</p>
                 </div>
 
                 <div class="export-actions">
@@ -105,8 +105,8 @@
                         <tr>
                             <th>#</th>
                             <th>Name</th>
-                            <th>Occupation</th>
-                            <th>Gender (Inferred)</th>
+                            <th>Profession</th>
+                            <th>Gender</th>
                             <th>Phone Number</th>
                             <th>Country</th>
                             <th>Action</th>
@@ -114,7 +114,7 @@
                     </thead>
                     <tbody id="contactsTbody">
                         <tr class="empty-row">
-                            <td colspan="7">No contacts harvested yet. Select options above and click <strong>Start Harvesting</strong>.</td>
+                            <td colspan="7">No contacts found yet. Select your search criteria and click <strong>Find Contacts</strong>.</td>
                         </tr>
                     </tbody>
                 </table>

@@ -21,10 +21,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const customUrls = customUrlsText ? customUrlsText.split('\n').map(url => url.trim()).filter(url => url) : [];
 
         searchBtn.disabled = true;
-        btnText.textContent = "[LIGHTNING] Crawling & Harvesting...";
+        btnText.textContent = "Searching...";
         resultsStats.textContent = customUrls.length > 0 
             ? `Scraping ${customUrls.length} custom URLs with Firecrawl...`
-            : `Automated intelligence engine scanning for ${gender || "all"} ${occupation}s in ${country}...`;
+            : `Searching for ${gender || "all"} ${occupation}s in ${country}...`;
         contactsTbody.innerHTML = `
             <tr class="empty-row">
                 <td colspan="7">
@@ -64,11 +64,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             } else {
                 resultsStats.textContent = `Error: ${data.error || "Failed to harvest contacts."}`;
-                contactsTbody.innerHTML = `<tr class="empty-row"><td colspan="7">Error harvesting contacts: ${escapeHtml(data.error || "")}</td></tr>`;
+                contactsTbody.innerHTML = `<tr class="empty-row"><td colspan="7">Error: ${escapeHtml(data.error || "")}</td></tr>`;
             }
         } catch (err) {
-            resultsStats.textContent = `Network Error: ${err.message}`;
-            contactsTbody.innerHTML = `<tr class="empty-row"><td colspan="7">Connection failed. Check server status.</td></tr>`;
+            resultsStats.textContent = `Connection failed. ${err.message}`;
+            contactsTbody.innerHTML = `<tr class="empty-row"><td colspan="7">Connection failed. Check your internet and try again.</td></tr>`;
         } finally {
             searchBtn.disabled = false;
             btnText.textContent = `[LIGHTNING] Start Harvesting ${limit} Targets`;

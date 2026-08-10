@@ -290,21 +290,11 @@ Return JSON: {{"contacts": [{{"Name": "...", "Occupation": "...", "Gender (Infer
         except Exception as e:
             logger.error(f"[{session_id}] Groq error: {e}")
     
-    # If both AI engines failed, return error (no Rust fallback for speed)
+    # If both AI engines failed, try Rust fallback
     if not extracted_records:
-        logger.error(f"[{session_id}] ❌ AI extraction failed")
-        return jsonify({
-            "success": False,
-            "error": "Failed to extract contacts. Please try again or contact support.",
-            "session_id": session_id,
-            "count": 0,
-            "records": []
-        }), 500
-        logger.info(f"[{session_id}] Executing Rust Harvester Fallback Engine...")
+        logger.info(f"[{session_id}] ⚡ AI engines failed, trying Rust fallback...")
         target_urls = get_default_sources(country, occupation)
-        if not target_urls:
-            logger.error(f"[{session_id}] No target URLs found for country={country}, occupation={occupation}")
-        else:
+        if target_urls:
             rust_binary = PROJECT_ROOT / "target" / "release" / "harvester.exe"
             cmd = [str(rust_binary) if rust_binary.exists() else "cargo", "run", "--release", "--"]
             cmd.extend(["--urls", ",".join(target_urls)])
@@ -316,29 +306,57 @@ Return JSON: {{"contacts": [{{"Name": "...", "Occupation": "...", "Gender (Infer
             
             try:
                 result = subprocess.run(cmd, cwd=PROJECT_ROOT, timeout=60, capture_output=True, text=True)
-                if result.returncode != 0:
+                if result.returncode == 0:
+                    cleaner = CleanerPipeline(RAW_JSON_PATH)
+                    if cleaner.load_data():
+                        df_fallback = cleaner.clean(target_occupation=occupation, filter_gender=gender, filter_country=country)
+                        extracted_records = df_fallback.to_dict(orient="records")
+                        logger.info(f"[{session_id}] 🔧 Rust fallback extracted {len(extracted_records)} contacts")
+                else:
                     logger.error(f"[{session_id}] Rust harvester failed: {result.stderr}")
-                
-                cleaner = CleanerPipeline(RAW_JSON_PATH)
-                if cleaner.load_data():
-                    df_fallback = cleaner.clean(target_occupation=occupation, filter_gender=gender, filter_country=country)
-                    extracted_records = df_fallback.to_dict(orient="records")
             except Exception as e:
                 logger.error(f"[{session_id}] Rust harvester error: {e}")
+    
+    # If still no contacts, return error
+    if not extracted_records:
+        logger.error(f"[{session_id}] ❌ All extraction methods failed")
+        return jsonify({
+            "success": False,
+            "error": f"No contacts found for '{occupation}' in {country}. Try different filters or check back later.",
+            "session_id": session_id,
+            "count": 0,
+            "records": []
+        }), 404
 
     # Enforce Schema & Validation
     validated_records = enforce_contact_schema(extracted_records, country, occupation, gender)
-    logger.info(f"[{session_id}] 📊 After schema validation: {len(validated_records)}/{len(extracted_records)} contacts kept (dropped {len(extracted_records) - len(validated_records)})")
+    logger.info(f"[{session_id}] After schema validation: {len(validated_records)}/{len(extracted_records)} contacts kept")
 
     if validated_records:
         cleaned_df = pd.DataFrame(validated_records).drop_duplicates(subset=["Phone Number"], keep="first")
-        logger.info(f"[{session_id}] 🔄 After deduplication: {len(cleaned_df)}/{len(validated_records)} contacts kept (dropped {len(validated_records) - len(cleaned_df)})")
+        logger.info(f"[{session_id}] After deduplication: {len(cleaned_df)}/{len(validated_records)} contacts kept")
     else:
         cleaned_df = pd.DataFrame()
 
+    # Apply occupation, gender, and country filters (main AI path)
+    if not cleaned_df.empty:
+        original_count = len(cleaned_df)
+        
+        if occupation:
+            cleaned_df = cleaned_df[cleaned_df["Occupation"].str.contains(occupation, case=False, na=False)]
+            logger.info(f"[{session_id}] After occupation filter '{occupation}': {len(cleaned_df)}/{original_count} contacts kept")
+        
+        if gender:
+            cleaned_df = cleaned_df[cleaned_df["Gender (Inferred)"].str.contains(gender, case=False, na=False)]
+            logger.info(f"[{session_id}] After gender filter '{gender}': {len(cleaned_df)}/{original_count} contacts kept")
+        
+        if country:
+            cleaned_df = cleaned_df[cleaned_df["Country"].str.contains(country, case=False, na=False)]
+            logger.info(f"[{session_id}] After country filter '{country}': {len(cleaned_df)}/{original_count} contacts kept")
+
     if not cleaned_df.empty and limit > 0:
         cleaned_df = cleaned_df.head(limit)
-        logger.info(f"[{session_id}] ✂️ After limit ({limit}): {len(cleaned_df)}/{len(validated_records)} contacts kept (dropped {len(validated_records) - len(cleaned_df)})")
+        logger.info(f"[{session_id}] After limit ({limit}): {len(cleaned_df)} contacts in final output")
 
     final_records = cleaned_df.to_dict(orient="records") if not cleaned_df.empty else []
 
