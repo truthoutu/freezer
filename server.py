@@ -342,17 +342,22 @@ Return JSON: {{"contacts": [{{"Name": "...", "Occupation": "...", "Gender (Infer
     if not cleaned_df.empty:
         original_count = len(cleaned_df)
         
-        if occupation:
-            cleaned_df = cleaned_df[cleaned_df["Occupation"].str.contains(occupation, case=False, na=False)]
-            logger.info(f"[{session_id}] After occupation filter '{occupation}': {len(cleaned_df)}/{original_count} contacts kept")
-        
-        if gender:
-            cleaned_df = cleaned_df[cleaned_df["Gender (Inferred)"].str.contains(gender, case=False, na=False)]
-            logger.info(f"[{session_id}] After gender filter '{gender}': {len(cleaned_df)}/{original_count} contacts kept")
-        
-        if country:
-            cleaned_df = cleaned_df[cleaned_df["Country"].str.contains(country, case=False, na=False)]
-            logger.info(f"[{session_id}] After country filter '{country}': {len(cleaned_df)}/{original_count} contacts kept")
+        try:
+            # Only filter if the columns exist
+            if occupation and "Occupation" in cleaned_df.columns:
+                cleaned_df = cleaned_df[cleaned_df["Occupation"].str.contains(occupation, case=False, na=False)]
+                logger.info(f"[{session_id}] After occupation filter '{occupation}': {len(cleaned_df)}/{original_count} contacts kept")
+            
+            if gender and "Gender (Inferred)" in cleaned_df.columns:
+                cleaned_df = cleaned_df[cleaned_df["Gender (Inferred)"].str.contains(gender, case=False, na=False)]
+                logger.info(f"[{session_id}] After gender filter '{gender}': {len(cleaned_df)}/{original_count} contacts kept")
+            
+            if country and "Country" in cleaned_df.columns:
+                cleaned_df = cleaned_df[cleaned_df["Country"].str.contains(country, case=False, na=False)]
+                logger.info(f"[{session_id}] After country filter '{country}': {len(cleaned_df)}/{original_count} contacts kept")
+        except Exception as e:
+            logger.error(f"[{session_id}] Filter error: {e}")
+            # Continue with unfiltered results rather than crashing
 
     if not cleaned_df.empty and limit > 0:
         cleaned_df = cleaned_df.head(limit)
@@ -379,7 +384,17 @@ Return JSON: {{"contacts": [{{"Name": "...", "Occupation": "...", "Gender (Infer
         "session_id": session_id,
         "count": len(final_records),
         "records": final_records
-    }), 200
+    })
+
+except Exception as e:
+    logger.error(f"[{session_id if 'session_id' in dir() else 'UNKNOWN'}] Fatal error in harvest: {e}", exc_info=True)
+    return jsonify({
+        "success": False,
+        "error": "An unexpected error occurred. Please try again or contact support.",
+        "session_id": session_id if 'session_id' in dir() else str(uuid.uuid4()),
+        "count": 0,
+        "records": []
+    }), 500, 200
 
 
 @app.route("/api/export/csv/<session_id>", methods=["GET"])
