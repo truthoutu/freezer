@@ -259,7 +259,7 @@ Return JSON: {{"contacts": [{{"Name": "...", "Occupation": "...", "Gender (Infer
 """
             completion = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
-                model="llama3.1-8b",
+                model="gpt-oss-120b",
                 temperature=0.1,
                 max_completion_tokens=2048,
                 response_format={"type": "json_object"}
@@ -270,6 +270,24 @@ Return JSON: {{"contacts": [{{"Name": "...", "Occupation": "...", "Gender (Infer
                 logger.info(f"[{session_id}] ⚡ Cerebras extracted {len(extracted_records)} contacts in seconds")
         except Exception as e:
             logger.error(f"[{session_id}] Cerebras error: {e}")
+            # Fall back to alternative Cerebras models in case model availability changes
+            for alt_model in ["gemma-4-31b", "zai-glm-4.7"]:
+                try:
+                    client = Cerebras(api_key=cerebras_key)
+                    completion = client.chat.completions.create(
+                        messages=[{"role": "user", "content": prompt}],
+                        model=alt_model,
+                        temperature=0.1,
+                        max_completion_tokens=2048,
+                        response_format={"type": "json_object"}
+                    )
+                    ai_res = json.loads(completion.choices[0].message.content)
+                    if "contacts" in ai_res and isinstance(ai_res["contacts"], list):
+                        extracted_records = ai_res["contacts"]
+                        logger.info(f"[{session_id}] ⚡ Cerebras ({alt_model}) extracted {len(extracted_records)} contacts")
+                        break
+                except Exception as e2:
+                    logger.warning(f"[{session_id}] Cerebras alt model {alt_model} failed: {e2}")
     
     # If Cerebras failed, try Groq (still fast)
     if not extracted_records and groq_key and Groq:
@@ -296,7 +314,11 @@ Return JSON: {{"contacts": [{{"Name": "...", "Occupation": "...", "Gender (Infer
         target_urls = get_default_sources(country, occupation)
         if target_urls:
             rust_binary = PROJECT_ROOT / "target" / "release" / "harvester.exe"
-            cmd = [str(rust_binary) if rust_binary.exists() else "cargo", "run", "--release", "--"]
+            # Use compiled binary directly if it exists, otherwise use cargo run
+            if rust_binary.exists():
+                cmd = [str(rust_binary)]
+            else:
+                cmd = ["cargo", "run", "--release", "--"]
             cmd.extend(["--urls", ",".join(target_urls)])
             
             if PROXIES_FILE_PATH.exists():
@@ -386,15 +408,21 @@ Return JSON: {{"contacts": [{{"Name": "...", "Occupation": "...", "Gender (Infer
         "records": final_records
     })
 
-except Exception as e:
-    logger.error(f"[{session_id if 'session_id' in dir() else 'UNKNOWN'}] Fatal error in harvest: {e}", exc_info=True)
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(e):
+    """Global error handler - catches ALL unhandled exceptions and returns clean JSON."""
+    # Preserve proper HTTP status codes for standard errors (404, 400, 429, etc.)
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e
+    logger.error(f"Unhandled error: {e}", exc_info=True)
     return jsonify({
         "success": False,
-        "error": "An unexpected error occurred. Please try again or contact support.",
-        "session_id": session_id if 'session_id' in dir() else str(uuid.uuid4()),
+        "error": "An unexpected error occurred. Please try again later.",
         "count": 0,
         "records": []
-    }), 500, 200
+    }), 500
 
 
 @app.route("/api/export/csv/<session_id>", methods=["GET"])
