@@ -1,7 +1,6 @@
 use crate::extractor::{Extractor, RawContact};
 use rand::seq::SliceRandom;
 use reqwest::{Client, Proxy};
-use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -38,18 +37,38 @@ pub struct CrawlerConfig {
     pub start_urls: Vec<String>,
     pub max_depth: usize,
     pub max_concurrency: usize,
-    pub user_agent: String,
     pub proxy_file: Option<PathBuf>,
 }
 
 pub struct Crawler {
     config: CrawlerConfig,
     proxies: Vec<ProxyInfo>,
+    user_agents: Vec<String>,
 }
 
 impl Crawler {
-    pub fn new(config: CrawlerConfig) -> Self {
+    pub async fn new(config: CrawlerConfig) -> Self {
         let mut proxies = Vec::new();
+        let mut user_agents = Vec::new();
+
+        // Fetch live user agents, with a fallback list
+        let default_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36".to_string();
+        match reqwest::get("https://jnrbsn.github.io/user-agents/user-agents.json").await {
+            Ok(resp) => {
+                if let Ok(agents) = resp.json::<Vec<String>>().await {
+                    user_agents = agents;
+                }
+            }
+            Err(_) => {
+                eprintln!("Could not fetch live user-agents, using default.");
+            }
+        };
+
+        // If fetching failed or returned nothing, use a reliable default
+        if user_agents.is_empty() {
+            user_agents.push(default_ua);
+        }
+
         if let Some(ref path) = config.proxy_file {
             if let Ok(content) = fs::read_to_string(path) {
                 for line in content.lines() {
@@ -60,31 +79,16 @@ impl Crawler {
             }
         }
 
-        Self { config, proxies }
-    }
-
-    fn build_client_for_proxy(&self, proxy_info: Option<&ProxyInfo>) -> Client {
-        let mut builder = Client::builder()
-            .user_agent(&self.config.user_agent)
-            .timeout(std::time::Duration::from_secs(12))
-            .danger_accept_invalid_certs(true);
-
-        if let Some(p) = proxy_info {
-            let socks_url = p.to_socks5_url();
-            if let Ok(proxy) = Proxy::all(&socks_url) {
-                builder = builder.proxy(proxy);
-            }
-        }
-
-        builder.build().unwrap_or_else(|_| Client::new())
+        Self { config, proxies, user_agents }
     }
 
     pub async fn run(&self) -> Vec<RawContact> {
         let (tx, mut rx) = mpsc::channel::<(String, usize)>(1000);
         let (contact_tx, mut contact_rx) = mpsc::channel::<Vec<RawContact>>(1000);
 
+        // This HashSet is now local to the run method, which is cleaner.
+        let mut visited = std::collections::HashSet::new();
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrency));
-        let mut visited = HashSet::new();
 
         for url in &self.config.start_urls {
             if visited.insert(url.clone()) {
@@ -95,6 +99,7 @@ impl Crawler {
         let extractor = Arc::new(Extractor::new());
         let max_depth = self.config.max_depth;
         let proxies = self.proxies.clone();
+        let user_agents = self.user_agents.clone();
 
         tokio::spawn(async move {
             while let Some((url_str, depth)) = rx.recv().await {
@@ -105,7 +110,7 @@ impl Crawler {
                 let sem = semaphore.clone();
                 let extractor_clone = extractor.clone();
                 let contact_tx_clone = contact_tx.clone();
-                let user_agent = "Mozilla/5.0".to_string();
+                let user_agents_clone = user_agents.clone();
 
                 // Pick random proxy if available
                 let proxy_choice = if !proxies.is_empty() {
@@ -118,9 +123,15 @@ impl Crawler {
                 tokio::spawn(async move {
                     let _permit = sem.acquire().await;
                     
+                    // Pick a random, up-to-date user-agent
+                    let random_ua = user_agents_clone
+                        .choose(&mut rand::thread_rng())
+                        .cloned()
+                        .unwrap_or_else(|| "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".to_string());
+
                     // Build client directly in the spawned task
                     let mut client_builder = Client::builder()
-                        .user_agent(&user_agent)
+                        .user_agent(random_ua)
                         .timeout(std::time::Duration::from_secs(30))
                         .danger_accept_invalid_certs(true);
                     

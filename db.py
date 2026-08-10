@@ -14,7 +14,7 @@ DB_PATH = Path(__file__).parent.resolve() / "harvest_history.db"
 logger = logging.getLogger("HarvesterDB")
 
 
-def init_db():
+def _init_db_tables():
     """Initialize SQLite tables for persistent storage."""
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
@@ -43,12 +43,10 @@ def init_db():
             )
         """)
         conn.commit()
-        logger.info(f"Initialized SQLite database at {DB_PATH}")
 
 
 def save_harvest_run(run_id: str, country: str, occupation: str, gender: str, limit: int, records: list[dict]):
     """Save a harvest run and its extracted contact records into SQLite."""
-    init_db()
     now_str = datetime.utcnow().isoformat()
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
@@ -76,7 +74,6 @@ def save_harvest_run(run_id: str, country: str, occupation: str, gender: str, li
 
 def get_harvest_history(limit: int = 50) -> list[dict]:
     """Retrieve recent harvest runs from SQLite DB."""
-    init_db()
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -88,3 +85,6 @@ def get_harvest_history(limit: int = 50) -> list[dict]:
         """, (limit,))
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
+
+# Initialize DB tables once on application startup.
+_init_db_tables()

@@ -158,12 +158,9 @@ class CleanerPipeline:
         if filter_country:
             filtered = filtered[filtered["country_inferred"].str.contains(filter_country, case=False, na=False)]
 
-        cols_to_select = ["name", "occupation_context", "phone_normalized", "gender_inferred", "country_inferred"]
-        for col in ["source_url", "raw_snippet"]:
-            if col in filtered.columns:
-                cols_to_select.append(col)
-
-        final_df = filtered[cols_to_select].rename(columns={
+        # Safely add optional columns if they don't exist to prevent data loss
+        final_cols = ["name", "occupation_context", "phone_normalized", "gender_inferred", "country_inferred", "source_url", "raw_snippet"]
+        final_df = filtered.reindex(columns=final_cols, fill_value="").rename(columns={
             "name": "Name",
             "occupation_context": "Occupation",
             "phone_normalized": "Phone Number",

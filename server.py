@@ -19,8 +19,8 @@ import pandas as pd
 
 from cleaner import CleanerPipeline
 from db import get_harvest_history, init_db, save_harvest_run
-from targets_registry import get_default_sources
-from external_apis import fetch_serpapi_urls, verify_phone_number
+from targets_registry import get_default_sources, MAJOR_CITIES
+from external_apis import fetch_serpapi_urls, verify_phone_number, fetch_duckduckgo_urls
 
 load_dotenv()
 
@@ -224,7 +224,11 @@ def api_harvest():
         logger.info(f"[{session_id}] Using {len(target_urls)} custom URLs provided by user")
     else:
         # Query SerpAPI Google Search Dorking for live target URLs
-        serp_urls = fetch_serpapi_urls(country, occupation, limit=5)
+        serp_urls = fetch_serpapi_urls(country, occupation, limit=3)
+        # Fallback to free DuckDuckGo search if SerpAPI is not configured or fails
+        if not serp_urls:
+            logger.info(f"[{session_id}] SerpAPI not used, trying DuckDuckGo search fallback...")
+            serp_urls = fetch_duckduckgo_urls(country, occupation, MAJOR_CITIES.get(country, []), limit=3)
         registry_urls = get_default_sources(country, occupation)
         target_urls = list(dict.fromkeys(serp_urls + registry_urls))
         logger.info(f"[{session_id}] Assembled {len(target_urls)} live target URLs (SerpAPI: {len(serp_urls)}, Registry: {len(registry_urls)})")
@@ -282,52 +286,37 @@ def api_harvest():
     
     if cerebras_key and Cerebras:
         logger.info(f"[{session_id}] 🧠 Cerebras: Extracting contacts from {len(crawled_content)} pages...")
-        try:
+        for model_name in ["gemma-4-31b", "gpt-oss-120b", "zai-glm-4.7"]:
             client = Cerebras(api_key=cerebras_key)
-            prompt = f"""Extract all contact information and phone numbers from the web page text below.
-Extract up to {limit} contacts that have real telephone numbers present in the page text.
+            prompt = f"""From the web page text below, extract contact information for individuals who appear to be real people.
+Do NOT extract information for general businesses, government services, or hotlines.
+Only extract contacts that have a real telephone number explicitly present in the text. Extract up to {limit} contacts.
 
 Context:
 - Default Country: {country}
 - Default Occupation: {occupation}
 - Default Gender: {gender}
 
-Return valid JSON format: {{"contacts": [{{"Name": "...", "Occupation": "{occupation}", "Gender (Inferred)": "{gender}", "Phone Number": "...", "Country": "{country}"}}]}}
+If a person's occupation or gender is not mentioned, leave those fields blank.
+Return valid JSON format: {{"contacts": [{{"Name": "...", "Occupation": "...", "Gender (Inferred)": "...", "Phone Number": "...", "Country": "{country}"}}]}}
 
 Web Page Content:
 {combined_content[:40000]}
 """
             completion = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
-                model="gemma-4-31b",
+                model=model_name,
                 temperature=0.1,
                 max_completion_tokens=2048,
                 response_format={"type": "json_object"}
             )
             ai_res = json.loads(completion.choices[0].message.content)
             if "contacts" in ai_res and isinstance(ai_res["contacts"], list):
-                extracted_records = ai_res["contacts"]
-                logger.info(f"[{session_id}] ⚡ Cerebras extracted {len(extracted_records)} contacts in seconds")
-        except Exception as e:
-            logger.error(f"[{session_id}] Cerebras primary model error: {e}")
-            if not extracted_records:
-                for alt_model in ["gpt-oss-120b", "zai-glm-4.7"]:
-                    try:
-                        client = Cerebras(api_key=cerebras_key)
-                        completion = client.chat.completions.create(
-                            messages=[{"role": "user", "content": prompt}],
-                            model=alt_model,
-                            temperature=0.1,
-                            max_completion_tokens=2048,
-                            response_format={"type": "json_object"}
-                        )
-                        ai_res = json.loads(completion.choices[0].message.content)
-                        if "contacts" in ai_res and isinstance(ai_res["contacts"], list) and ai_res["contacts"]:
-                            extracted_records = ai_res["contacts"]
-                            logger.info(f"[{session_id}] ⚡ Cerebras ({alt_model}) extracted {len(extracted_records)} contacts")
-                            break
-                    except Exception as e2:
-                        logger.warning(f"[{session_id}] Cerebras model {alt_model} notice: {e2}")
+                if ai_res["contacts"]:
+                    extracted_records = ai_res["contacts"]
+                    logger.info(f"[{session_id}] ⚡ Cerebras ({model_name}) extracted {len(extracted_records)} contacts in seconds")
+                    break # Success, stop trying other models
+            logger.warning(f"[{session_id}] Cerebras model {model_name} returned no contacts.")
     
     # If Cerebras failed, try Groq (still fast)
     if not extracted_records and groq_key and Groq:

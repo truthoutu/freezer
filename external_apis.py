@@ -9,6 +9,7 @@ import logging
 import requests
 from dotenv import load_dotenv
 
+
 load_dotenv()
 
 logger = logging.getLogger("ExternalAPIs")
@@ -73,6 +74,38 @@ def fetch_serpapi_urls(country: str, occupation: str, limit: int = 10) -> list[s
 
     return []
 
+
+def fetch_duckduckgo_urls(country: str, occupation: str, cities: list, limit: int = 5) -> list[str]:
+    """
+    Query DuckDuckGo's HTML version for target URLs. Free alternative to SerpAPI.
+    """
+    urls = set()
+    search_queries = [f'"{occupation}" contact phone directory {country}']
+    for city in cities[:2]: # Add a couple of city-specific searches
+        search_queries.append(f'"{occupation}" contact phone "{city}"')
+
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    
+    for query in search_queries:
+        if len(urls) >= limit:
+            break
+        try:
+            logger.info(f"DuckDuckGo: Querying for '{query}'...")
+            resp = requests.post("https://html.duckduckgo.com/html/", data={"q": query}, headers=headers, timeout=8)
+            if resp.status_code == 200:
+                # Basic regex to find result URLs in DDG's simple HTML
+                found = re.findall(r'a class="result__a" href="([^"]+)"', resp.text)
+                for url in found:
+                    clean_url = requests.utils.unquote(url.split("uddg=")[-1])
+                    if clean_url.startswith("http"):
+                        urls.add(clean_url)
+            else:
+                logger.warning(f"DuckDuckGo search failed with status {resp.status_code}")
+        except Exception as e:
+            logger.error(f"DuckDuckGo request failed: {e}")
+
+    logger.info(f"DuckDuckGo successfully fetched {len(urls)} live organic URLs.")
+    return list(urls)[:limit]
 
 def verify_phone_number(phone: str, default_country_code: str = "") -> dict:
     """
