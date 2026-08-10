@@ -299,7 +299,7 @@ Web Page Content:
 """
             completion = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
-                model="gpt-oss-120b",
+                model="llama3.1-8b",
                 temperature=0.1,
                 max_completion_tokens=2048,
                 response_format={"type": "json_object"}
@@ -310,24 +310,24 @@ Web Page Content:
                 logger.info(f"[{session_id}] ⚡ Cerebras extracted {len(extracted_records)} contacts in seconds")
         except Exception as e:
             logger.error(f"[{session_id}] Cerebras error: {e}")
-            # Fall back to alternative Cerebras models in case model availability changes
-            for alt_model in ["gemma-4-31b", "zai-glm-4.7"]:
-                try:
-                    client = Cerebras(api_key=cerebras_key)
-                    completion = client.chat.completions.create(
-                        messages=[{"role": "user", "content": prompt}],
-                        model=alt_model,
-                        temperature=0.1,
-                        max_completion_tokens=2048,
-                        response_format={"type": "json_object"}
-                    )
-                    ai_res = json.loads(completion.choices[0].message.content)
-                    if "contacts" in ai_res and isinstance(ai_res["contacts"], list):
-                        extracted_records = ai_res["contacts"]
-                        logger.info(f"[{session_id}] ⚡ Cerebras ({alt_model}) extracted {len(extracted_records)} contacts")
-                        break
-                except Exception as e2:
-                    logger.warning(f"[{session_id}] Cerebras alt model {alt_model} failed: {e2}")
+            if not extracted_records:
+                for alt_model in ["llama3.3-70b", "llama-3.3-70b"]:
+                    try:
+                        client = Cerebras(api_key=cerebras_key)
+                        completion = client.chat.completions.create(
+                            messages=[{"role": "user", "content": prompt}],
+                            model=alt_model,
+                            temperature=0.1,
+                            max_completion_tokens=2048,
+                            response_format={"type": "json_object"}
+                        )
+                        ai_res = json.loads(completion.choices[0].message.content)
+                        if "contacts" in ai_res and isinstance(ai_res["contacts"], list) and ai_res["contacts"]:
+                            extracted_records = ai_res["contacts"]
+                            logger.info(f"[{session_id}] ⚡ Cerebras ({alt_model}) extracted {len(extracted_records)} contacts")
+                            break
+                    except Exception as e2:
+                        logger.warning(f"[{session_id}] Cerebras model {alt_model} notice: {e2}")
     
     # If Cerebras failed, try Groq (still fast)
     if not extracted_records and groq_key and Groq:
