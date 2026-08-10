@@ -267,19 +267,18 @@ def api_harvest():
         logger.info(f"[{session_id}] 🧠 Cerebras: Extracting contacts from {len(crawled_content)} pages...")
         try:
             client = Cerebras(api_key=cerebras_key)
-            prompt = f"""Extract contact information from the provided web page content.
-Return ONLY contacts with real phone numbers found in the content.
-Maximum {limit} contacts.
+            prompt = f"""Extract all contact information and phone numbers from the web page text below.
+Extract up to {limit} contacts that have real telephone numbers present in the page text.
 
-Filters:
-- Country: {country}
-- Occupation: {occupation}
-- Gender: {gender}
+Context:
+- Default Country: {country}
+- Default Occupation: {occupation}
+- Default Gender: {gender}
 
-Content:
+Return valid JSON format: {{"contacts": [{{"Name": "...", "Occupation": "{occupation}", "Gender (Inferred)": "{gender}", "Phone Number": "...", "Country": "{country}"}}]}}
+
+Web Page Content:
 {combined_content[:40000]}
-
-Return JSON: {{"contacts": [{{"Name": "...", "Occupation": "...", "Gender (Inferred)": "...", "Phone Number": "...", "Country": "..."}}]}}
 """
             completion = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
