@@ -328,14 +328,17 @@ Return JSON: {{"contacts": [{{"Name": "...", "Occupation": "...", "Gender (Infer
 
     # Enforce Schema & Validation
     validated_records = enforce_contact_schema(extracted_records, country, occupation, gender)
+    logger.info(f"[{session_id}] 📊 After schema validation: {len(validated_records)}/{len(extracted_records)} contacts kept (dropped {len(extracted_records) - len(validated_records)})")
 
     if validated_records:
         cleaned_df = pd.DataFrame(validated_records).drop_duplicates(subset=["Phone Number"], keep="first")
+        logger.info(f"[{session_id}] 🔄 After deduplication: {len(cleaned_df)}/{len(validated_records)} contacts kept (dropped {len(validated_records) - len(cleaned_df)})")
     else:
         cleaned_df = pd.DataFrame()
 
     if not cleaned_df.empty and limit > 0:
         cleaned_df = cleaned_df.head(limit)
+        logger.info(f"[{session_id}] ✂️ After limit ({limit}): {len(cleaned_df)}/{len(validated_records)} contacts kept (dropped {len(validated_records) - len(cleaned_df)})")
 
     final_records = cleaned_df.to_dict(orient="records") if not cleaned_df.empty else []
 
