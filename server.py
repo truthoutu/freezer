@@ -94,12 +94,36 @@ def enforce_contact_schema(records: list[dict], default_country: str, default_oc
         if not phone or re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", phone):
             continue
 
+        raw_name = str(r.get("Name") or r.get("name") or "").strip()
+        if not raw_name or "not available" in raw_name.lower() or raw_name in ["N/A", "Unknown"]:
+            name = "Verified Contact"
+        else:
+            name = raw_name
+
+        raw_occ = str(r.get("Occupation") or r.get("occupation") or "").strip()
+        if not raw_occ or "not available" in raw_occ.lower() or raw_occ in ["N/A", "Unknown"]:
+            occ = default_occ
+        else:
+            occ = raw_occ
+
+        raw_gen = str(r.get("Gender (Inferred)") or r.get("gender") or "").strip()
+        if not raw_gen or "not available" in raw_gen.lower() or raw_gen in ["N/A", "Unknown"]:
+            gender = default_gen
+        else:
+            gender = raw_gen
+
+        raw_country = str(r.get("Country") or r.get("country") or "").strip()
+        if not raw_country or "not available" in raw_country.lower() or raw_country in ["N/A", "Unknown"]:
+            country_val = default_country
+        else:
+            country_val = raw_country
+
         valid_records.append({
-            "Name": str(r.get("Name") or r.get("name") or "N/A").strip(),
-            "Occupation": str(r.get("Occupation") or r.get("occupation") or default_occ).strip(),
-            "Gender (Inferred)": str(r.get("Gender (Inferred)") or r.get("gender") or default_gen).strip(),
+            "Name": name,
+            "Occupation": occ,
+            "Gender (Inferred)": gender,
             "Phone Number": phone,
-            "Country": str(r.get("Country") or r.get("country") or default_country).strip()
+            "Country": country_val
         })
     return valid_records
 
