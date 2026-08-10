@@ -110,6 +110,7 @@ impl Crawler {
                 let sem = semaphore.clone();
                 let extractor_clone = extractor.clone();
                 let contact_tx_clone = contact_tx.clone();
+                let tx_clone = tx.clone(); // Clone sender for recursive crawling
                 let user_agents_clone = user_agents.clone();
 
                 // Pick random proxy if available
@@ -159,6 +160,16 @@ impl Crawler {
                                             if !contacts.is_empty() {
                                                 let _ = contact_tx_clone.send(contacts).await;
                                             }
+
+                                            // Crawl deeper: find new links and send them to the queue
+                                            if depth < max_depth {
+                                                let new_links = extractor_clone.extract_links(&html, &url_str);
+                                                for new_link in new_links {
+                                                    // Send to the channel to be processed by the receiver loop
+                                                    let _ = tx_clone.send((new_link, depth + 1)).await;
+                                                }
+                                            }
+
                                             break; // Success, exit retry loop
                                         }
                                         Err(e) => {

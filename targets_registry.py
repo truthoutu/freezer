@@ -1,9 +1,14 @@
 """
 Dynamic Target Directory Generator - Zero Hardcoding
 Generates country-specific, localized search directory URLs on the fly for ANY occupation keyword and country.
+Uses OpenStreetMap Nominatim geocoding API instead of hardcoded city lists.
 """
 
+import json
 import logging
+import urllib.parse
+from urllib.request import urlopen, URLError
+
 from urllib.parse import quote_plus
 
 logger = logging.getLogger("DynamicTargetGenerator")
@@ -36,37 +41,34 @@ OCCUPATION_MAPS = {
     }
 }
 
-# Major Region/City Lists per Country for Micro-Targeted Searching
-MAJOR_CITIES = {
-    "Germany": [
-        "bundesweit", "berlin", "hamburg", "muenchen", "koeln", "frankfurt",
-        "stuttgart", "duesseldorf", "dortmund", "essen"
-    ],
-    "Switzerland": [
-        "Schweiz", "Zuerich", "Genf", "Basel", "Lausanne", "Bern",
-        "Winterthur", "Luzern", "St.Gallen"
-    ],
-    "Australia": [
-        "", "Sydney", "Melbourne", "Brisbane", "Perth", "Adelaide",
-        "Gold Coast", "Canberra", "Newcastle"
-    ],
-    "United States": [
-        "NY", "CA", "TX", "FL", "IL", "PA", "OH", "GA", "NC", "MI",
-        "New York", "Los Angeles", "Chicago", "Houston", "Phoenix"
-    ],
-    "Canada": [
-        "Toronto", "Montreal", "Vancouver", "Calgary", "Ottawa", "Edmonton"
-    ],
-    "United Kingdom": [
-        "London", "Birmingham", "Manchester", "Glasgow", "Liverpool", "Leeds"
-    ]
-}
+# Geocoding cache
+_LOCATION_CACHE = {}
+
+
+def _geocode_location(country: str, region: str) -> list[str]:
+    """Geocode a region/city using OpenStreetMap Nominatim API."""
+    cache_key = (country, region)
+    if cache_key in _LOCATION_CACHE:
+        return _LOCATION_CACHE[cache_key]
+
+    try:
+        encoded_region = urllib.parse.quote(region)
+        encoded_country = urllib.parse.quote(country)
+        url = f"https://nominatim.openstreetmap.org/search.php?q={encoded_region}+{encoded_country}&format=json&limit=5"
+        req = urlopen(url, timeout=10)
+        data = json.loads(req.read().decode())
+        locations = [item.get("display_name", "") for item in data if item.get("type") == "city"]
+        _LOCATION_CACHE[cache_key] = locations if locations else [region]
+    except Exception:
+        _LOCATION_CACHE[cache_key] = [region]
+
+    return _LOCATION_CACHE[cache_key]
 
 
 def get_default_sources(country: str, occupation: str) -> list[str]:
     """
     Dynamically generate search directory URLs for ANY country and occupation.
-    No hardcoded lists required.
+    Uses OpenStreetMap Nominatim for geocoding instead of hardcoded city lists.
     """
     urls = []
     occ_clean = (occupation or "Professional").strip()
@@ -75,49 +77,36 @@ def get_default_sources(country: str, occupation: str) -> list[str]:
     if country == "Germany":
         local_kw = OCCUPATION_MAPS["German"].get(occ_lower, occ_clean)
         encoded_kw = quote_plus(local_kw)
-        cities = MAJOR_CITIES["Germany"]
 
-        for city in cities:
-            urls.append(f"https://www.gelbseiten.de/suche/{encoded_kw}/{city}")
-
-        for city in cities[:5]:
-            city_suffix = f"+{city.capitalize()}" if city != "bundesweit" else ""
-            urls.append(f"https://www.dasoertliche.de/Themen/{encoded_kw}{city_suffix}")
+        for region in _geocode_location("Germany", "Germany"):
+            urls.append(f"https://www.gelbseiten.de/suche/{encoded_kw}/{urllib.parse.quote(region)}")
+        for region in _geocode_location("Germany", "Germany")[:3]:
+            urls.append(f"https://www.dasoertliche.de/Themen/{encoded_kw}+{urllib.parse.quote(region)}")
 
     elif country == "Switzerland":
         local_kw = OCCUPATION_MAPS["French"].get(occ_lower, OCCUPATION_MAPS["German"].get(occ_lower, occ_clean))
         encoded_kw = quote_plus(local_kw)
-        cities = MAJOR_CITIES["Switzerland"]
 
-        for city in cities:
-            urls.append(f"https://tel.search.ch/?was={encoded_kw}&wo={city}")
+        for region in _geocode_location("Switzerland", "Switzerland"):
+            urls.append(f"https://tel.search.ch/?was={encoded_kw}&wo={urllib.parse.quote(region)}")
 
     elif country == "Australia":
         encoded_kw = quote_plus(occ_clean)
-        cities = MAJOR_CITIES["Australia"]
-
-        for city in cities:
-            if city:
-                location_str = f"+{quote_plus(city)}"
-                urls.append(f"https://www.yellowpages.com.au/search/findings?text={encoded_kw}{location_str}")
+        for region in _geocode_location("Australia", "Australia"):
+            if region:
+                urls.append(f"https://www.yellowpages.com.au/search/findings?text={encoded_kw}+{urllib.parse.quote(region)}")
             else:
                 urls.append(f"https://www.yellowpages.com.au/search/findings?text={encoded_kw}")
 
     elif country in ["United States", "Canada"]:
         encoded_kw = quote_plus(occ_clean)
-        cities = MAJOR_CITIES.get(country, MAJOR_CITIES["United States"])
-
-        for city in cities:
-            loc_encoded = quote_plus(city)
-            urls.append(f"https://www.yellowpages.com/search?search_terms={encoded_kw}&geo_location_terms={loc_encoded}")
+        for region in _geocode_location("United States" if country == "United States" else "Canada", country):
+            urls.append(f"https://www.yellowpages.com/search?search_terms={encoded_kw}&geo_location_terms={urllib.parse.quote(region)}")
 
     elif country == "United Kingdom":
         encoded_kw = quote_plus(occ_clean)
-        cities = MAJOR_CITIES["United Kingdom"]
-
-        for city in cities:
-            loc_encoded = quote_plus(city)
-            urls.append(f"https://www.yell.com/ucs/UcsSearchAction.do?keywords={encoded_kw}&location={loc_encoded}")
+        for region in _geocode_location("United Kingdom", "United Kingdom"):
+            urls.append(f"https://www.yell.com/ucs/UcsSearchAction.do?keywords={encoded_kw}&location={urllib.parse.quote(region)}")
 
     else:
         encoded_kw = quote_plus(occ_clean)
