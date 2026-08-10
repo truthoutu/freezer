@@ -229,49 +229,56 @@ def api_harvest():
         target_urls = list(dict.fromkeys(serp_urls + registry_urls))
         logger.info(f"[{session_id}] Assembled {len(target_urls)} live target URLs (SerpAPI: {len(serp_urls)}, Registry: {len(registry_urls)})")
     
-    # STEP 1: Firecrawl - Parallel URL scraping with anti-bot bypass (FAST)
+    # STEP 1: Web Content Retrieval (Firecrawl -> Direct HTTP Fallback)
     crawled_content = []
     if firecrawl_key and Firecrawl and target_urls:
-        logger.info(f"[{session_id}] 🚀 Firecrawl: Scraping {len(target_urls[:3])} URLs in parallel...")
+        logger.info(f"[{session_id}] 🚀 Firecrawl: Scraping target URLs...")
         try:
             firecrawl_client = Firecrawl(api_key=firecrawl_key)
-            
-            # Parallel scraping - Firecrawl handles anti-bot protection
-            for url in target_urls[:3]:  # Limit to 3 URLs for speed
+            for url in target_urls[:2]:
                 try:
                     result = firecrawl_client.scrape(
                         url=url,
-                        formats=["markdown"],  # Get clean markdown
-                        only_main_content=True  # Skip headers/footers/nav
+                        formats=["markdown"],
+                        only_main_content=True
                     )
                     if result and hasattr(result, 'markdown') and result.markdown:
-                        crawled_content.append(result.markdown[:15000])  # 15KB per URL
-                        logger.info(f"[{session_id}] ✅ Firecrawl scraped: {url} ({len(result.markdown)} chars)")
-                    elif result and hasattr(result, 'content') and result.content:
-                        crawled_content.append(result.content[:15000])
-                        logger.info(f"[{session_id}] ✅ Firecrawl scraped: {url} ({len(result.content)} chars)")
+                        crawled_content.append(result.markdown[:15000])
+                        logger.info(f"[{session_id}] ✅ Firecrawl scraped: {url}")
                 except Exception as e:
-                    logger.warning(f"[{session_id}] Firecrawl error for {url}: {e}")
-                    continue
-            
-            if crawled_content:
-                logger.info(f"[{session_id}] ⚡ Firecrawl completed: {len(crawled_content)} pages scraped")
+                    logger.warning(f"[{session_id}] Firecrawl notice for {url}: {e}")
+                    break
         except Exception as e:
             logger.error(f"[{session_id}] Firecrawl client error: {e}")
-    
-    # If Firecrawl failed, return error (no fallback to slow methods for paying clients)
-    if not crawled_content:
-        logger.error(f"[{session_id}] ❌ Firecrawl failed to retrieve content. No data available.")
-        return jsonify({
-            "success": False,
-            "error": "Data retrieval service temporarily unavailable. This may be due to: (1) Firecrawl credits exhausted, (2) Target sites unavailable, or (3) Network issues. Please try again or contact support.",
-            "session_id": session_id,
-            "count": 0,
-            "records": []
-        }), 503
+
+    # Fallback to Direct HTTP fetch if Firecrawl returned 0 content
+    if not crawled_content and target_urls:
+        logger.info(f"[{session_id}] 🌐 Direct HTTP Fallback: Fetching live target web pages...")
+        import requests
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        proxies_dict = None
+        if PROXIES_FILE_PATH.exists():
+            try:
+                lines = [l.strip() for l in PROXIES_FILE_PATH.read_text().splitlines() if l.strip()]
+                if lines:
+                    parts = lines[0].split(":")
+                    if len(parts) == 4:
+                        p_str = f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}"
+                        proxies_dict = {"http": p_str, "https": p_str}
+            except Exception:
+                pass
+
+        for url in target_urls[:3]:
+            try:
+                resp = requests.get(url, headers=headers, proxies=proxies_dict, timeout=8)
+                if resp.status_code == 200 and len(resp.text) > 300:
+                    crawled_content.append(resp.text[:20000])
+                    logger.info(f"[{session_id}] ✅ Direct HTTP fetched: {url} ({len(resp.text)} chars)")
+            except Exception as e:
+                logger.warning(f"[{session_id}] Direct fetch notice for {url}: {e}")
     
     # STEP 2: Cerebras AI - Ultra-fast extraction (SECONDS)
-    combined_content = "\n\n---PAGE BREAK---\n\n".join(crawled_content)
+    combined_content = "\n\n---PAGE BREAK---\n\n".join(crawled_content) if crawled_content else ""
     
     if cerebras_key and Cerebras:
         logger.info(f"[{session_id}] 🧠 Cerebras: Extracting contacts from {len(crawled_content)} pages...")
