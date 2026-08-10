@@ -299,7 +299,7 @@ Web Page Content:
 """
             completion = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
-                model="llama3.1-8b",
+                model="gemma-4-31b",
                 temperature=0.1,
                 max_completion_tokens=2048,
                 response_format={"type": "json_object"}
@@ -309,9 +309,9 @@ Web Page Content:
                 extracted_records = ai_res["contacts"]
                 logger.info(f"[{session_id}] ⚡ Cerebras extracted {len(extracted_records)} contacts in seconds")
         except Exception as e:
-            logger.error(f"[{session_id}] Cerebras error: {e}")
+            logger.error(f"[{session_id}] Cerebras primary model error: {e}")
             if not extracted_records:
-                for alt_model in ["llama3.3-70b", "llama-3.3-70b"]:
+                for alt_model in ["gpt-oss-120b", "zai-glm-4.7"]:
                     try:
                         client = Cerebras(api_key=cerebras_key)
                         completion = client.chat.completions.create(
