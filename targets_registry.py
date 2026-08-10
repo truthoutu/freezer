@@ -6,47 +6,51 @@ Contains real, public directory search URLs for Germany, Switzerland, Australia,
 TARGET_SOURCES = {
     "Germany": {
         "Nurse": [
-            "https://www.gelbenseiten.de/suche/pflegedienst/bundesweit",
-            "https://www.gelbenseiten.de/suche/pflegedienst/berlin",
-            "https://www.gelbenseiten.de/suche/pflegedienst/hamburg",
-            "https://www.gelbenseiten.de/suche/pflegedienst/muenchen",
-            "https://www.gelbenseiten.de/suche/pflegedienst/koeln",
-            "https://www.gelbenseiten.de/suche/pflegedienst/frankfurt",
-            "https://www.gelbenseiten.de/suche/pflegedienst/stuttgart",
-            "https://www.gelbenseiten.de/suche/pflegedienst/duesseldorf",
-            "https://www.gelbenseiten.de/suche/pflegedienst/dortmund",
-            "https://www.gelbenseiten.de/suche/pflegedienst/essen",
+            "https://www.gelbseiten.de/suche/pflegedienst/bundesweit",
+            "https://www.gelbseiten.de/suche/pflegedienst/berlin",
+            "https://www.gelbseiten.de/suche/pflegedienst/hamburg",
+            "https://www.gelbseiten.de/suche/pflegedienst/muenchen",
+            "https://www.gelbseiten.de/suche/pflegedienst/koeln",
+            "https://www.gelbseiten.de/suche/pflegedienst/frankfurt",
+            "https://www.gelbseiten.de/suche/pflegedienst/stuttgart",
+            "https://www.gelbseiten.de/suche/pflegedienst/duesseldorf",
+            "https://www.gelbseiten.de/suche/pflegedienst/dortmund",
             "https://www.dasoertliche.de/Themen/Krankenschwester",
             "https://www.dasoertliche.de/Themen/Krankenschwester+Berlin",
             "https://www.dasoertliche.de/Themen/Krankenschwester+Hamburg",
             "https://www.dasoertliche.de/Themen/Krankenschwester+Muenchen"
         ],
         "Doctor": [
-            "https://www.gelbenseiten.de/suche/aerzte/bundesweit",
-            "https://www.gelbenseiten.de/suche/aerzte/berlin",
-            "https://www.gelbenseiten.de/suche/aerzte/hamburg",
-            "https://www.gelbenseiten.de/suche/aerzte/muenchen",
-            "https://www.gelbenseiten.de/suche/aerzte/koeln",
+            "https://www.gelbseiten.de/suche/aerzte/bundesweit",
+            "https://www.gelbseiten.de/suche/aerzte/berlin",
+            "https://www.gelbseiten.de/suche/aerzte/hamburg",
+            "https://www.gelbseiten.de/suche/aerzte/muenchen",
+            "https://www.gelbseiten.de/suche/aerzte/koeln",
             "https://www.dasoertliche.de/Themen/Arzt",
             "https://www.dasoertliche.de/Themen/Arzt+Berlin",
-            "https://www.dasoertliche.de/Themen/Arzt+Hamburg"
+            "https://www.dasoertliche.de/Themen/Arzt+Hamburg",
+            "https://www.dasoertliche.de/Themen/Arzt+Muenchen"
         ],
         "Realtor": [
-            "https://www.gelbenseiten.de/suche/immobilienmakler/bundesweit",
-            "https://www.gelbenseiten.de/suche/immobilienmakler/berlin",
-            "https://www.gelbenseiten.de/suche/immobilienmakler/hamburg",
-            "https://www.gelbenseiten.de/suche/immobilienmakler/muenchen",
-            "https://www.dasoertliche.de/Themen/Immobilienmakler"
+            "https://www.gelbseiten.de/suche/immobilienmakler/bundesweit",
+            "https://www.gelbseiten.de/suche/immobilienmakler/berlin",
+            "https://www.gelbseiten.de/suche/immobilienmakler/hamburg",
+            "https://www.gelbseiten.de/suche/immobilienmakler/muenchen",
+            "https://www.dasoertliche.de/Themen/Immobilienmakler",
+            "https://www.dasoertliche.de/Themen/Immobilienmakler+Berlin"
         ],
         "Lawyer": [
-            "https://www.gelbenseiten.de/suche/rechtsanwalt/bundesweit",
-            "https://www.gelbenseiten.de/suche/rechtsanwalt/berlin",
-            "https://www.gelbenseiten.de/suche/rechtsanwalt/hamburg",
-            "https://www.gelbenseiten.de/suche/rechtsanwalt/muenchen",
-            "https://www.dasoertliche.de/Themen/Rechtsanwalt"
+            "https://www.gelbseiten.de/suche/rechtsanwalt/bundesweit",
+            "https://www.gelbseiten.de/suche/rechtsanwalt/berlin",
+            "https://www.gelbseiten.de/suche/rechtsanwalt/hamburg",
+            "https://www.gelbseiten.de/suche/rechtsanwalt/muenchen",
+            "https://www.dasoertliche.de/Themen/Rechtsanwalt",
+            "https://www.dasoertliche.de/Themen/Rechtsanwalt+Berlin",
+            "https://www.dasoertliche.de/Themen/Rechtsanwalt+Hamburg"
         ],
         "default": [
-            "https://www.gelbenseiten.de/suche/pflegedienst/bundesweit"
+            "https://www.gelbseiten.de/suche/pflegedienst/bundesweit",
+            "https://www.dasoertliche.de/Themen/Krankenschwester"
         ]
     },
     "Switzerland": {
@@ -73,6 +77,12 @@ TARGET_SOURCES = {
             "https://tel.search.ch/?was=Avocat&wo=Zuerich",
             "https://tel.search.ch/?was=Avocat&wo=Genf",
             "https://tel.search.ch/?was=Avocat&wo=Basel"
+        ],
+        "Realtor": [
+            "https://tel.search.ch/?was=Immobilienmakler&wo=Schweiz",
+            "https://tel.search.ch/?was=Immobilienmakler&wo=Zuerich",
+            "https://tel.search.ch/?was=Immobilienmakler&wo=Genf",
+            "https://tel.search.ch/?was=Immobilienmakler&wo=Basel"
         ],
         "default": [
             "https://tel.search.ch/?was=Infirmiere&wo=Schweiz"
@@ -133,6 +143,12 @@ TARGET_SOURCES = {
             "https://www.yellowpages.com/search?search_terms=real+estate+agent&geo_location_terms=Los+Angeles",
             "https://www.yellowpages.com/search?search_terms=real+estate+agent&geo_location_terms=Chicago",
             "https://www.yellowpages.com/search?search_terms=real+estate+agent&geo_location_terms=Houston"
+        ],
+        "Doctor": [
+            "https://www.yellowpages.com/search?search_terms=doctor&geo_location_terms=NY",
+            "https://www.yellowpages.com/search?search_terms=doctor&geo_location_terms=Los+Angeles",
+            "https://www.yellowpages.com/search?search_terms=doctor&geo_location_terms=Chicago",
+            "https://www.yellowpages.com/search?search_terms=doctor&geo_location_terms=Houston"
         ],
         "Lawyer": [
             "https://www.yellowpages.com/search?search_terms=lawyer&geo_location_terms=NY",
