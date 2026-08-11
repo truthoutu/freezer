@@ -57,19 +57,14 @@ def fetch_serpapi_urls(country: str, occupation: str, limit: int = 10) -> list[s
         logger.warning("SERPAPI_KEY not configured. Falling back to registry targets.")
         return []
 
-    # Advanced Multi-Category Search Dork Templates
-    # 1. High-Precision & General Directories
+    # High-Yield Directories & Specialized Hub Dorks
     query_templates = [
-        f'"{occupation}" contact phone number directory "{country}"',
-        f'inurl:"member-directory" "{occupation}" "{country}"',
-        f'site:.gov "{occupation}" registry OR license "{country}"',
-        f'site:crunchbase.com OR site:wellfound.com "{occupation}" "{country}"',
-        f'site:clutch.co OR site:bark.com OR site:thumbtack.com "{occupation}" "{country}"',
-        f'site:linkedin.com/company/ OR site:linkedin.com/in/ "{occupation}" "{country}" "phone"',
-        f'site:yelp.com OR site:yellowpages.com "{occupation}" "{country}"',
-        f'site:zillow.com OR site:redfin.com OR site:houzz.com "{occupation}" "{country}"',
-        f'site:avvo.com OR site:martindale.com OR site:healthgrades.com "{occupation}" "{country}"',
-        f'site:justdial.com OR site:hotfrog.com "{occupation}" "{country}"'
+        f'"{occupation}" contact phone number directory "{country}" -filetype:pdf -site:instagram.com -site:wikipedia.org',
+        f'site:yellowpages.* OR site:gelbseiten.de OR site:dasoertliche.de OR site:tel.search.ch "{occupation}" "{country}"',
+        f'site:doctena.de OR site:jameda.de OR site:healthgrades.com OR site:zocdoc.com "{occupation}" "{country}"',
+        f'site:avvo.com OR site:martindale.com OR site:zillow.com OR site:redfin.com "{occupation}" "{country}"',
+        f'site:clutch.co OR site:bark.com OR site:crunchbase.com "{occupation}" "{country}"',
+        f'inurl:"member-directory" "{occupation}" "{country}" -filetype:pdf'
     ]
     
 

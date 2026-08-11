@@ -114,7 +114,12 @@ def enforce_contact_schema(records: list[dict], default_country: str, default_oc
             continue
 
         raw_name = str(r.get("Name") or r.get("name") or "").strip()
-        if not raw_name or "not available" in raw_name.lower() or raw_name in ["N/A", "Unknown"]:
+        name_lower = raw_name.lower()
+        # Reject generic business service desks, hotlines, or directory titles
+        if any(term in name_lower for term in ["dienst", "hotline", "service desk", "customer care", "helpdesk", "call center", "emergency line"]):
+            continue
+
+        if not raw_name or "not available" in name_lower or raw_name in ["N/A", "Unknown"]:
             name = "Verified Contact"
         else:
             name = raw_name
