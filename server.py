@@ -214,9 +214,18 @@ def _parse_raw_ai_contacts_with_source(
         gender = gender if gender and "not available" not in gender.lower() and gender not in ["N/A", "Unknown"] else default_gen
         country = country if country and "not available" not in country.lower() and country not in ["N/A", "Unknown"] else default_country
 
-        # Reject generic business service desks, web terms, or directory titles
+        # REJECT ORGANIZATIONS & ASSOCIATIONS: Require real human individual person names
         name_lower = name.lower()
-        if any(term in name_lower for term in ["dienst", "hotline", "service desk", "customer care", "helpdesk", "call center", "emergency line", "privacy policy", "cookie", "website", "phone number"]):
+        org_terms = [
+            "association", "verband", "gesellschaft", "verein", "syndicat", "organisation", 
+            "organization", "foundation", "stiftung", "clinic", "klinik", "hospital", "spital", 
+            "center", "zentrum", "service", "services", "department", "gmbh", "ag", "inc", 
+            "ltd", "llc", "group", "gruppe", "council", "institute", "institut", "hotline", 
+            "helpdesk", "customer care", "emergency line", "privacy policy", "cookie", "website", 
+            "phone number", "medicine", "health", "violence", "union", "league", "bureau"
+        ]
+        if any(re.search(r"\b" + re.escape(term) + r"\b", name_lower) for term in org_terms):
+            logger.warning(f"Rejecting organization/association name '{name}' (individual human name required)")
             continue
 
         parsed_contacts.append({
@@ -300,7 +309,11 @@ def _fetch_content_firecrawl(session_id: str, target_urls: list, api_key: str) -
                 logger.info(f"[{session_id}] ✅ Firecrawl scraped: {url} ({len(result.markdown)} chars)")
                 return (result.markdown[:15000], url) # Return content AND the original URL
         except Exception as e:
-            logger.warning(f"[{session_id}] Firecrawl notice for {url}: {e}")
+            err_str = str(e)
+            if "Insufficient credits" in err_str or "Payment Required" in err_str:
+                logger.warning(f"[{session_id}] Firecrawl skipped (Insufficient credits): {err_str[:60]}")
+            else:
+                logger.warning(f"[{session_id}] Firecrawl notice for {url}: {e}")
         return None
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
@@ -478,18 +491,18 @@ def api_harvest():
         def _extract_page_cerebras(item):
             page_content, page_url = item
             try:
-                client = Cerebras(api_key=cerebras_key)
-                prompt = f"""CRITICAL INSTRUCTION: Extract ONLY contact entries whose name AND telephone number are explicitly written verbatim in the web page text below.
-Do NOT guess, invent, or extrapolate information. If no real person with an explicit phone number is present in the text, return empty string.
+                client = Cerebras(api_key=cerebras_key, max_retries=1)
+                prompt = f"""CRITICAL INSTRUCTION: Extract ONLY contact entries for REAL INDIVIDUAL HUMAN PRACTITIONERS (e.g. 'Dr. Sarah Meyer', 'Markus Schmidt', 'Elena Rossi') whose name AND telephone number are explicitly written verbatim in the web page text below.
+DO NOT extract company names, clinic names, hospital names, or association names (e.g. 'Swiss Association of Nurses', 'Children's Medicine Switzerland'). The Name MUST be an individual person's human name.
+If no real individual person with an explicit phone number is present in the text, return empty string.
 
 Context:
 - Default Country: {country}
 - Default Occupation: {occupation}
 - Source URL: {page_url}
 
-Return each contact as a block of raw verbatim strings, delimited by "---".
-Example format:
-Name: John Doe
+Return format:
+Name: Dr. John Doe
 Phone: +1 555-123-4567
 Occupation: Doctor
 Gender: Male
@@ -512,7 +525,7 @@ Web Page Content:
                 logger.warning(f"[{session_id}] Cerebras AI extraction notice for {page_url}: {e}")
             return []
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             futures = [executor.submit(_extract_page_cerebras, item) for item in crawled_content_with_urls]
             for f in concurrent.futures.as_completed(futures):
                 try:
