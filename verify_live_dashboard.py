@@ -23,7 +23,7 @@ try:
     resp = requests.post(url, json=payload, timeout=60)
     elapsed = round(time.time() - start_time, 2)
     
-    print(f"\n✅ HTTP Response Status: {resp.status_code} OK (Time: {elapsed} seconds)")
+    print(f"\n[SUCCESS] HTTP Response Status: {resp.status_code} OK (Time: {elapsed} seconds)")
     data = resp.json()
     print(f"   Success Flag: {data.get('success')}")
     print(f"   Session ID: {data.get('session_id')}")
@@ -45,6 +45,6 @@ try:
         print(f"Message: {data.get('message') or data.get('error')}")
 
 except Exception as e:
-    print(f"\n❌ Error connecting to server: {e}")
+    print(f"\n[ERROR] Error connecting to server: {e}")
 
 print("\n=== VERIFICATION COMPLETE ===")

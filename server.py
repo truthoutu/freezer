@@ -313,42 +313,30 @@ def _fetch_content_firecrawl(session_id: str, target_urls: list, api_key: str) -
     return crawled_content_with_urls
 
 def _fetch_content_direct(session_id: str, target_urls: list) -> list[tuple[str, str]]:
-    """Fetch web content using parallel HTTP requests with proxy rotation."""
+    """Fetch web content using ultra-fast parallel HTTP requests."""
     import requests
-    crawled_content = []
+    crawled_content_with_urls = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-    
-    proxies_list = []
-    if PROXIES_FILE_PATH.exists():
-        try:
-            for l in PROXIES_FILE_PATH.read_text().splitlines():
-                parts = l.strip().split(":")
-                if len(parts) == 4:
-                    p_str = f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}"
-                    proxies_list.append({"http": p_str, "https": p_str})
-        except Exception:
-            pass
 
-    def _fetch_single(idx: int, url: str):
+    def _fetch_single(url: str):
         try:
             logger.info(f"[{session_id}] 🌐 Direct HTTP: Fetching {url}...")
-            p_dict = proxies_list[idx % len(proxies_list)] if proxies_list else None
-            resp = requests.get(url, headers=headers, proxies=p_dict, timeout=6)
+            resp = requests.get(url, headers=headers, timeout=3)
             if resp.status_code == 200 and len(resp.text) > 300:
                 logger.info(f"[{session_id}] ✅ Direct HTTP fetched: {url} ({len(resp.text)} chars)")
-                return (resp.text[:20000], url) # Return content and URL
+                return (resp.text[:20000], url)
         except Exception as e:
             logger.warning(f"[{session_id}] Direct fetch notice for {url}: {e}")
         return None
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor: # Reduced concurrency for direct fetch
-        futures = [executor.submit(_fetch_single, i, u) for i, u in enumerate(target_urls[:5])]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(_fetch_single, u) for u in target_urls[:5]]
         for f in concurrent.futures.as_completed(futures):
             res = f.result()
             if res:
-                crawled_content.append(res)
+                crawled_content_with_urls.append(res)
 
-    return crawled_content
+    return crawled_content_with_urls
 
 
 def _extract_with_rust_fallback(session_id: str, country: str, occupation: str, gender: str) -> list[dict]:
@@ -452,13 +440,19 @@ def api_harvest():
         f_fc = executor.submit(_get_firecrawl)
         f_tv = executor.submit(_get_tavily)
         
-        fc_res = f_fc.result()
-        tv_res = f_tv.result()
+        try:
+            fc_res = f_fc.result(timeout=6)
+            if fc_res:
+                crawled_content_with_urls.extend(fc_res)
+        except Exception as e:
+            logger.warning(f"[{session_id}] Firecrawl extraction timed out/skipped: {e}")
 
-        if fc_res:
-            crawled_content_with_urls.extend(fc_res)
-        if tv_res:
-            crawled_content_with_urls.extend(tv_res)
+        try:
+            tv_res = f_tv.result(timeout=6)
+            if tv_res:
+                crawled_content_with_urls.extend(tv_res)
+        except Exception as e:
+            logger.warning(f"[{session_id}] Tavily extraction timed out/skipped: {e}")
 
     if not crawled_content_with_urls and target_urls:
         crawled_content_with_urls = _fetch_content_direct(session_id, target_urls)
@@ -526,9 +520,12 @@ Web Page Content:
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(_extract_page_cerebras, item) for item in crawled_content_with_urls]
             for f in concurrent.futures.as_completed(futures):
-                res = f.result()
-                if res:
-                    all_ai_extracted_contacts.extend(res)
+                try:
+                    res = f.result(timeout=6)
+                    if res:
+                        all_ai_extracted_contacts.extend(res)
+                except Exception as e:
+                    logger.warning(f"[{session_id}] Cerebras page extraction timeout: {e}")
 
     # Groq Fallback
     if not all_ai_extracted_contacts and groq_key and Groq and crawled_content_with_urls:
@@ -560,7 +557,7 @@ Web Page Content:
                     messages=[{"role": "user", "content": prompt}],
                     model="llama3-70b-8192",
                     temperature=0.1,
-                    timeout=12,
+                    timeout=10,
                 )
                 raw_res = comp.choices[0].message.content
                 if raw_res:
@@ -572,9 +569,12 @@ Web Page Content:
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(_extract_page_groq, item) for item in crawled_content_with_urls]
             for f in concurrent.futures.as_completed(futures):
-                res = f.result()
-                if res:
-                    all_ai_extracted_contacts.extend(res)
+                try:
+                    res = f.result(timeout=6)
+                    if res:
+                        all_ai_extracted_contacts.extend(res)
+                except Exception as e:
+                    logger.warning(f"[{session_id}] Groq page extraction timeout: {e}")
     
     extracted_records = all_ai_extracted_contacts
     
@@ -710,4 +710,4 @@ if __name__ == "__main__":
     validate_api_keys()
     port = int(os.environ.get("PORT", 5000))
     logger.info(f"Starting Harvester Web Server on http://0.0.0.0:{port}")
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

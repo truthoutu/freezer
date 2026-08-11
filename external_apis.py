@@ -116,12 +116,10 @@ def fetch_serpapi_urls(country: str, occupation: str, limit: int = 10) -> list[s
 
     params = {
         "engine": "google",
-        "q": query,
+        "q": query_templates[0],
         "api_key": SERPAPI_KEY,
         "num": limit,
-        "async": True # Use async for faster parallel searches
     }
-    search_ids = []
 
     # Add country-specific Google domain parameters if applicable
     country_lower = country.lower()
@@ -144,36 +142,19 @@ def fetch_serpapi_urls(country: str, occupation: str, limit: int = 10) -> list[s
         params["gl"] = "uk"
         params["hl"] = "en"
 
-    # Dispatch multiple parallel searches for diverse results
-    logger.info(f"SerpAPI: Dispatching {len(query_templates)} parallel searches for '{occupation}' in {country}...")
-    for i, q_template in enumerate(query_templates):
-        if i >= limit: break
-        try:
-            search_params = params.copy()
-            search_params["q"] = q_template
-            resp = requests.get("https://serpapi.com/search.json", params=search_params, timeout=5)
-            if resp.status_code == 200:
-                search_ids.append(resp.json()["search_metadata"]["id"])
-        except Exception as e:
-            logger.warning(f"SerpAPI dispatch notice: {e}")
+    urls = set()
+    logger.info(f"SerpAPI: Searching Google for '{occupation}' in {country}...")
+    try:
+        resp = requests.get("https://serpapi.com/search.json", params=params, timeout=4)
+        if resp.status_code == 200:
+            data = resp.json()
+            found_urls = [r["link"] for r in data.get("organic_results", []) if "link" in r and r["link"].startswith("http")]
+            urls.update(found_urls[:limit])
+            logger.info(f"SerpAPI retrieved {len(urls)} live organic search URLs instantly.")
+    except Exception as e:
+        logger.warning(f"SerpAPI search notice: {e}")
 
-    # Collect results from parallel searches
-    for search_id in search_ids:
-        try:
-            result_url = f"https://serpapi.com/searches/{search_id}?api_key={SERPAPI_KEY}"
-            # Wait for async result
-            for _ in range(3): # Poll a few times
-                resp = requests.get(result_url, timeout=10)
-                if resp.status_code == 200 and "organic_results" in resp.json():
-                    data = resp.json()
-                    found_urls = [r["link"] for r in data.get("organic_results", []) if "link" in r and r["link"].startswith("http")]
-                    urls.update(found_urls)
-                    break
-        except Exception as e:
-            logger.warning(f"SerpAPI result collection notice: {e}")
-
-    logger.info(f"SerpAPI successfully fetched {len(urls)} unique live organic URLs from {len(search_ids)} queries.")
-    return list(urls)[:limit]
+    return list(urls)
 
 
 def fetch_duckduckgo_urls(country: str, occupation: str, cities: list, limit: int = 5) -> list[str]:
