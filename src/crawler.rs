@@ -183,7 +183,13 @@ impl Crawler {
                         }
                     }
                     
-                    let client = client_builder.build().unwrap_or_else(|_| Client::new());
+                    let client = match client_builder.build() {
+                        Ok(c) => c,
+                        Err(e) => {
+                            eprintln!("FATAL: Failed to build HTTP client: {}. Aborting task.", e);
+                            return; // Exit this spawned task
+                        }
+                    };
                     
                     // Retry logic with exponential backoff
                     for attempt in 0..3 {

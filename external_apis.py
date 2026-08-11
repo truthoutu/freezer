@@ -18,6 +18,36 @@ SERPAPI_KEY = os.getenv("SERPAPI_KEY", "").strip()
 NUMVERIFY_KEY = os.getenv("NUMVERIFY_KEY", "").strip()
 
 
+def validate_api_keys():
+    """
+    Performs a simple validation on API keys on startup.
+    Logs a clear warning if a key seems invalid or is missing.
+    """
+    logger.info("Validating external API keys...")
+    if not SERPAPI_KEY:
+        logger.warning("SerpAPI: SERPAPI_KEY is not set. Live URL discovery will be disabled.")
+    elif len(SERPAPI_KEY) < 20:
+        logger.warning("SerpAPI: SERPAPI_KEY appears to be too short. Please verify it.")
+
+    if not NUMVERIFY_KEY:
+        logger.warning("Numverify: NUMVERIFY_KEY is not set. Phone validation will be skipped.")
+    elif len(NUMVERIFY_KEY) < 20:
+        logger.warning("Numverify: NUMVERIFY_KEY appears to be too short. Please verify it.")
+
+    # Check keys for AI/Scraping providers, which are critical
+    firecrawl_key = os.getenv("FIRECRAWL_API_KEY", "").strip()
+    if not firecrawl_key:
+        logger.error("CRITICAL: FIRECRAWL_API_KEY is missing. The primary scraping pipeline will fail.")
+
+    cerebras_key = os.getenv("CEREBRAS_API_KEY", "").strip()
+    if not cerebras_key:
+        logger.warning("Cerebras: CEREBRAS_API_KEY is missing. AI extraction will fall back to other providers.")
+
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not groq_key:
+        logger.warning("Groq: GROQ_API_KEY is missing. AI extraction fallback will be limited.")
+
+
 def fetch_serpapi_urls(country: str, occupation: str, limit: int = 10) -> list[str]:
     """
     Query Google live via SerpAPI for target country & occupation search dorks.
@@ -183,4 +213,4 @@ def verify_phone_number(phone: str, default_country_code: str = "") -> dict:
         logger.warning(f"Numverify check notice for {phone}: {e}")
 
     # If API call fails, we cannot guarantee validity.
-    return {"valid": False, "phone": phone, "carrier": "Unknown", "line_type": "Unknown"}
+    return None

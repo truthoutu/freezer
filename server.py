@@ -20,7 +20,7 @@ import pandas as pd
 from cleaner import CleanerPipeline
 from db import get_harvest_history, save_harvest_run
 from targets_registry import get_default_sources
-from external_apis import fetch_serpapi_urls, verify_phone_number, fetch_duckduckgo_urls
+from external_apis import fetch_serpapi_urls, verify_phone_number, fetch_duckduckgo_urls, validate_api_keys
 
 load_dotenv()
 
@@ -128,7 +128,8 @@ def enforce_contact_schema(records: list[dict], default_country: str, default_oc
             country_val = raw_country
 
         # Validate line status with Numverify API
-        v_res = verify_phone_number(phone)
+        # If Numverify fails (returns None), default to valid to avoid losing the contact.
+        v_res = verify_phone_number(phone) or {"valid": True, "phone": phone}
         if not v_res.get("valid", True):
             logger.warning(f"Rejecting invalid phone number: {phone}")
             continue
@@ -503,6 +504,8 @@ def export_excel(session_id: str = None):
 
 if __name__ == "__main__":
     import os
+    # Perform startup checks
+    validate_api_keys()
     port = int(os.environ.get("PORT", 5000))
     logger.info(f"Starting Harvester Web Server on http://0.0.0.0:{port}")
     app.run(host="0.0.0.0", port=port, debug=False)
