@@ -58,6 +58,16 @@ MAJOR_CITIES = {
     "France": ["Paris", "Marseille", "Lyon"],
 }
 
+# Map full country names to two-letter ISO codes for API calls
+COUNTRY_ISO_MAP = {
+    "Germany": "DE",
+    "Switzerland": "CH",
+    "Australia": "AU",
+    "United States": "US",
+    "Canada": "CA",
+    "France": "FR",
+}
+
 # AI Client Libraries
 try:
     from cerebras.cloud.sdk import Cerebras
@@ -127,9 +137,10 @@ def enforce_contact_schema(records: list[dict], default_country: str, default_oc
         else:
             country_val = raw_country
 
-        # Validate line status with Numverify API
-        # If Numverify fails (returns None), default to valid to avoid losing the contact.
-        v_res = verify_phone_number(phone) or {"valid": True, "phone": phone}
+        # STRICT VALIDATION: Numverify must return a valid response.
+        country_code = COUNTRY_ISO_MAP.get(country_val, "")
+        v_res = verify_phone_number(phone, default_country_code=country_code)
+
         if not v_res.get("valid", True):
             logger.warning(f"Rejecting invalid phone number: {phone}")
             continue
@@ -443,8 +454,12 @@ Web Page Content:
             logger.warning(f"Excel export notice: {e}")
 
     # Save Run to SQLite Database
-    save_harvest_run(session_id, country, occupation, gender, limit, final_records)
-
+    try:
+        if final_records:
+            save_harvest_run(session_id, country, occupation, gender, limit, final_records)
+    except Exception as e:
+        logger.error(f"[{session_id}] Database persistence failed: {e}")
+        # Continue to return results to the user even if DB save fails
     return jsonify({
         "success": True,
         "session_id": session_id,

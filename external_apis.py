@@ -177,8 +177,8 @@ def verify_phone_number(phone: str, default_country_code: str = "") -> dict:
     """
     Query Numverify API to validate phone number line status and metadata.
     """
-    if not NUMVERIFY_KEY or not phone:
-        return {"valid": True, "phone": phone, "carrier": "Unknown", "line_type": "Unknown"}
+    if not NUMVERIFY_KEY or not phone: # If no key or phone, we can't validate.
+        return None
 
     # Extract digits only
     digits = re.sub(r"\D", "", phone)
