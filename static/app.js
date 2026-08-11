@@ -49,6 +49,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 })
             });
 
+            if (!response.ok) {
+                if (response.status === 502 || response.status === 504) {
+                    throw new Error("Render cloud gateway timeout (502 Bad Gateway). Please try clicking Start Harvesting again.");
+                }
+                const textErr = await response.text();
+                throw new Error(`Server returned HTTP ${response.status}: ${textErr.substring(0, 100)}`);
+            }
+
             const data = await response.json();
 
             if (data.success) {

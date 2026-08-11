@@ -215,7 +215,7 @@ def verify_phone_number(phone: str, default_country_code: str = "") -> dict:
         params["country_code"] = default_country_code
 
     try:
-        resp = requests.get("https://apilayer.net/api/validate", params=params, timeout=8) # Use HTTPS for security
+        resp = requests.get("https://apilayer.net/api/validate", params=params, timeout=2) # 2s max timeout
         if resp.status_code == 200:
             data = resp.json()
             is_valid = data.get("valid", False) # Default to False if 'valid' key is missing
