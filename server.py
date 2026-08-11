@@ -433,37 +433,33 @@ def api_harvest():
     
     # STEP 2: Thorough Web Content Retrieval (Firecrawl -> Tavily -> Direct HTTP Fallback)
     # Now returns list of (content, url) tuples
-    # STEP 2: Mass Concurrent Web Content Retrieval (Firecrawl + Tavily + Direct HTTP Fallback)
-    firecrawl_key = os.getenv("FIRECRAWL_API_KEY", "").strip()
+    # STEP 2: Fast Parallel Content Retrieval (Tavily AI Search + Direct HTTP Scraper)
     crawled_content_with_urls = []
-
-    def _get_firecrawl():
-        return _fetch_content_firecrawl(session_id, target_urls, firecrawl_key)
 
     def _get_tavily():
         raw_t = fetch_tavily_content(country, occupation, limit=5)
         return [(c, "tavily_ai_search") for c in raw_t] if raw_t else []
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        f_fc = executor.submit(_get_firecrawl)
-        f_tv = executor.submit(_get_tavily)
-        
-        try:
-            fc_res = f_fc.result(timeout=6)
-            if fc_res:
-                crawled_content_with_urls.extend(fc_res)
-        except Exception as e:
-            logger.warning(f"[{session_id}] Firecrawl extraction timed out/skipped: {e}")
+    def _get_direct():
+        return _fetch_content_direct(session_id, target_urls)
 
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        f_tv = executor.submit(_get_tavily)
+        f_dr = executor.submit(_get_direct)
+        
         try:
             tv_res = f_tv.result(timeout=6)
             if tv_res:
                 crawled_content_with_urls.extend(tv_res)
         except Exception as e:
-            logger.warning(f"[{session_id}] Tavily extraction timed out/skipped: {e}")
+            logger.warning(f"[{session_id}] Tavily search skipped/timed out: {e}")
 
-    if not crawled_content_with_urls and target_urls:
-        crawled_content_with_urls = _fetch_content_direct(session_id, target_urls)
+        try:
+            dr_res = f_dr.result(timeout=6)
+            if dr_res:
+                crawled_content_with_urls.extend(dr_res)
+        except Exception as e:
+            logger.warning(f"[{session_id}] Direct fetch skipped/timed out: {e}")
     
     # Extract just the content for the Rust fallback, if needed
     crawled_content_strings = [content for content, _ in crawled_content_with_urls]
@@ -491,7 +487,7 @@ def api_harvest():
         def _extract_page_cerebras(item):
             page_content, page_url = item
             try:
-                client = Cerebras(api_key=cerebras_key, max_retries=1)
+                client = Cerebras(api_key=cerebras_key, max_retries=0)
                 prompt = f"""CRITICAL INSTRUCTION: Extract ONLY contact entries for REAL INDIVIDUAL HUMAN PRACTITIONERS (e.g. 'Dr. Sarah Meyer', 'Markus Schmidt', 'Elena Rossi') whose name AND telephone number are explicitly written verbatim in the web page text below.
 DO NOT extract company names, clinic names, hospital names, or association names (e.g. 'Swiss Association of Nurses', 'Children's Medicine Switzerland'). The Name MUST be an individual person's human name.
 If no real individual person with an explicit phone number is present in the text, return empty string.
@@ -517,12 +513,17 @@ Web Page Content:
                     model="gemma-4-31b",
                     temperature=0.1,
                     max_completion_tokens=1024,
+                    timeout=5,
                 )
                 raw_res = comp.choices[0].message.content
                 if raw_res and "No contacts found" not in raw_res:
                     return _parse_raw_ai_contacts_with_source(raw_res, page_url, page_content, country, occupation, gender)
             except Exception as e:
-                logger.warning(f"[{session_id}] Cerebras AI extraction notice for {page_url}: {e}")
+                err_msg = str(e)
+                if "429" in err_msg or "rate_limit" in err_msg.lower():
+                    logger.warning(f"[{session_id}] Cerebras AI rate limit reached (skipping retry): {err_msg[:60]}")
+                else:
+                    logger.warning(f"[{session_id}] Cerebras AI extraction notice for {page_url}: {e}")
             return []
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
