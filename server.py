@@ -357,15 +357,10 @@ def _extract_with_rust_fallback(session_id: str, country: str, occupation: str, 
         return []
     
     # Pass occupation and country to Rust for dynamic query generation
-    cmd.extend(["--occupation", occupation, "--country", country])
-    
-    if PROXIES_FILE_PATH.exists():
-        cmd.extend(["--proxies", str(PROXIES_FILE_PATH)])
-        
-    cmd.extend(["--depth", "1", "--concurrency", "5", "--output", str(RAW_JSON_PATH)])
+    cmd.extend(["--occupation", occupation, "--country", country, "--depth", "1", "--concurrency", "5", "--output", str(RAW_JSON_PATH)])
     
     try:
-        result = subprocess.run(cmd, cwd=PROJECT_ROOT, timeout=60, capture_output=True, text=True)
+        result = subprocess.run(cmd, cwd=PROJECT_ROOT, timeout=5, capture_output=True, text=True)
         if result.returncode == 0:
             cleaner = CleanerPipeline(RAW_JSON_PATH)
             if cleaner.load_data():
