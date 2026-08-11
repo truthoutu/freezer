@@ -19,7 +19,7 @@ import pandas as pd
 
 from cleaner import CleanerPipeline
 from db import get_harvest_history, save_harvest_run
-from targets_registry import get_default_sources, MAJOR_CITIES
+from targets_registry import get_default_sources
 from external_apis import fetch_serpapi_urls, verify_phone_number, fetch_duckduckgo_urls
 
 load_dotenv()
@@ -47,6 +47,16 @@ ALLOWED_COUNTRIES = ["Germany", "Switzerland", "Australia", "United States", "Ca
 RATE_LIMIT_STORE = defaultdict(list)
 RATE_LIMIT_WINDOW = 60  # seconds
 MAX_REQUESTS_PER_WINDOW = 20
+
+# Major cities for search query enhancement
+MAJOR_CITIES = {
+    "Germany": ["Berlin", "Hamburg", "Munich"],
+    "Switzerland": ["Zurich", "Geneva", "Basel"],
+    "Australia": ["Sydney", "Melbourne", "Brisbane"],
+    "United States": ["New York", "Los Angeles", "Chicago"],
+    "Canada": ["Toronto", "Vancouver", "Montreal"],
+    "France": ["Paris", "Marseille", "Lyon"],
+}
 
 # AI Client Libraries
 try:
