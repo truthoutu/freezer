@@ -101,15 +101,15 @@ def check_rate_limit(client_ip: str) -> bool:
 
 
 def enforce_contact_schema(records: list[dict], default_country: str) -> list[dict]:
-    """Validate and enforce consistent contact data schema, primarily Numverify validation."""
+    """Validate and enforce consistent contact data schema using parallel thread validation."""
     valid_records = []
 
-    for r in records:
+    def _verify_record(r):
         if not isinstance(r, dict):
-            continue
+            return None
         phone = str(r.get("Phone Number") or "").strip()
         if not phone:
-            continue
+            return None
 
         country_val = str(r.get("Country") or default_country).strip()
         country_code = COUNTRY_ISO_MAP.get(country_val, "")
@@ -117,13 +117,19 @@ def enforce_contact_schema(records: list[dict], default_country: str) -> list[di
 
         if v_res and v_res.get("valid") is False:
             logger.warning(f"Rejecting invalid phone number: {phone}")
-            continue
+            return None
 
         verified_phone = v_res.get("phone", phone)
-
-        # Update phone number with verified one
         r["Phone Number"] = verified_phone
-        valid_records.append(r) # Append the modified record
+        return r
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(_verify_record, rec) for rec in records]
+        for f in concurrent.futures.as_completed(futures):
+            res = f.result()
+            if res:
+                valid_records.append(res)
+
     return valid_records
 
 
@@ -431,14 +437,28 @@ def api_harvest():
     
     # STEP 2: Thorough Web Content Retrieval (Firecrawl -> Tavily -> Direct HTTP Fallback)
     # Now returns list of (content, url) tuples
+    # STEP 2: Mass Concurrent Web Content Retrieval (Firecrawl + Tavily + Direct HTTP Fallback)
     firecrawl_key = os.getenv("FIRECRAWL_API_KEY", "").strip()
-    crawled_content_with_urls = _fetch_content_firecrawl(session_id, target_urls, firecrawl_key)
+    crawled_content_with_urls = []
 
-    # Tavily Deep AI Web Search Integration
-    tavily_raw_contents = fetch_tavily_content(country, occupation, limit=5)
-    if tavily_raw_contents:
-        # Tavily doesn't return source URLs directly in this format, use a placeholder
-        crawled_content_with_urls.extend([(c, "tavily_ai_search") for c in tavily_raw_contents])
+    def _get_firecrawl():
+        return _fetch_content_firecrawl(session_id, target_urls, firecrawl_key)
+
+    def _get_tavily():
+        raw_t = fetch_tavily_content(country, occupation, limit=5)
+        return [(c, "tavily_ai_search") for c in raw_t] if raw_t else []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        f_fc = executor.submit(_get_firecrawl)
+        f_tv = executor.submit(_get_tavily)
+        
+        fc_res = f_fc.result()
+        tv_res = f_tv.result()
+
+        if fc_res:
+            crawled_content_with_urls.extend(fc_res)
+        if tv_res:
+            crawled_content_with_urls.extend(tv_res)
 
     if not crawled_content_with_urls and target_urls:
         crawled_content_with_urls = _fetch_content_direct(session_id, target_urls)
