@@ -461,17 +461,17 @@ def api_harvest():
     extracted_records = []
 
     # Process each page individually with AI for source tracking and confidence scoring
+    # Process each page concurrently with Cerebras AI for source tracking and sub-3-second execution
     all_ai_extracted_contacts = []
     if cerebras_key and Cerebras:
-        logger.info(f"[{session_id}] 🧠 Cerebras: Extracting contacts from {len(crawled_content_with_urls)} pages...")
-        for page_content, page_url in crawled_content_with_urls:
-            cerebras_models = os.getenv("CEREBRAS_MODELS", "gemma-4-31b").strip().split(',')
-            for model_name in cerebras_models:
-                try:
-                    client = Cerebras(api_key=cerebras_key)
-                    # Raw Stream Intelligence: Ask for raw strings, include source URL in prompt
-                    prompt = f"""CRITICAL INSTRUCTION: Extract ONLY contact entries whose name AND telephone number are explicitly written verbatim in the web page text below.
-Do NOT guess, invent, or extrapolate information. If no real person with an explicit phone number is present in the text, return empty JSON: {{"contacts": []}}.
+        logger.info(f"[{session_id}] 🧠 Cerebras Parallel AI Engine: Extracting contacts from {len(crawled_content_with_urls)} pages concurrently...")
+        
+        def _extract_page_cerebras(item):
+            page_content, page_url = item
+            try:
+                client = Cerebras(api_key=cerebras_key)
+                prompt = f"""CRITICAL INSTRUCTION: Extract ONLY contact entries whose name AND telephone number are explicitly written verbatim in the web page text below.
+Do NOT guess, invent, or extrapolate information. If no real person with an explicit phone number is present in the text, return empty string.
 
 Context:
 - Default Country: {country}
@@ -486,81 +486,75 @@ Occupation: Doctor
 Gender: Male
 Country: United States
 ---
-Name: Jane Smith
-Phone: +1 555-987-6543
-Occupation: Nurse
-Gender: Female
-Country: United States
----
 
 Web Page Content:
-{page_content[:40000]}
+{page_content[:30000]}
 """
-                    completion = client.chat.completions.create(
-                        messages=[{"role": "user", "content": prompt}],
-                        model=model_name,
-                        temperature=0.1,
-                        max_completion_tokens=2048,
-                        # Do not ask for JSON directly, expect raw string
-                    )
-                    raw_ai_res = completion.choices[0].message.content
-                    if raw_ai_res and "No contacts found" not in raw_ai_res:
-                        parsed = _parse_raw_ai_contacts_with_source(raw_ai_res, page_url, page_content, country, occupation, gender)
-                        if parsed:
-                            all_ai_extracted_contacts.extend(parsed)
-                            logger.info(f"[{session_id}] ⚡ Cerebras ({model_name}) extracted {len(parsed)} contacts from {page_url}")
-                            break # Success for this page, stop trying other models
-                    logger.warning(f"[{session_id}] Cerebras model {model_name} returned no contacts for {page_url}.")
-                except Exception as e:
-                    logger.error(f"[{session_id}] Cerebras model {model_name} failed for {page_url}: {e}")
-    
-    # If Cerebras failed for a page, try Groq (still fast)
+                comp = client.chat.completions.create(
+                    messages=[{"role": "user", "content": prompt}],
+                    model="gemma-4-31b",
+                    temperature=0.1,
+                    max_completion_tokens=1024,
+                )
+                raw_res = comp.choices[0].message.content
+                if raw_res and "No contacts found" not in raw_res:
+                    return _parse_raw_ai_contacts_with_source(raw_res, page_url, page_content, country, occupation, gender)
+            except Exception as e:
+                logger.warning(f"[{session_id}] Cerebras AI extraction notice for {page_url}: {e}")
+            return []
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(_extract_page_cerebras, item) for item in crawled_content_with_urls]
+            for f in concurrent.futures.as_completed(futures):
+                res = f.result()
+                if res:
+                    all_ai_extracted_contacts.extend(res)
+
+    # Groq Fallback
     if not all_ai_extracted_contacts and groq_key and Groq and crawled_content_with_urls:
-        logger.info(f"[{session_id}] 🧠 Groq: Backup extraction for {len(crawled_content_with_urls)} pages...")
-        for page_content, page_url in crawled_content_with_urls:
+        logger.info(f"[{session_id}] 🧠 Groq Parallel Backup Engine: Extracting from {len(crawled_content_with_urls)} pages...")
+        
+        def _extract_page_groq(item):
+            page_content, page_url = item
             try:
                 client = Groq(api_key=groq_key)
                 prompt = f"""CRITICAL INSTRUCTION: Extract ONLY contact entries whose name AND telephone number are explicitly written verbatim in the web page text below.
-Do NOT guess, invent, or extrapolate information. If no real person with an explicit phone number is present in the text, return empty string or "No contacts found".
+Do NOT guess, invent, or extrapolate information.
 
 Context:
 - Default Country: {country}
 - Default Occupation: {occupation}
-- Source URL: {page_url}
 
-Return each contact as a block of raw verbatim strings, delimited by "---".
-Example format:
+Return format:
 Name: John Doe
 Phone: +1 555-123-4567
 Occupation: Doctor
 Gender: Male
 Country: United States
 ---
-Name: Jane Smith
-Phone: +1 555-987-6543
-Occupation: Nurse
-Gender: Female
-Country: United States
----
 
 Web Page Content:
-{page_content[:40000]}
+{page_content[:30000]}
 """
-                completion = client.chat.completions.create(
-                    model="llama3-70b-8192",
+                comp = client.chat.completions.create(
                     messages=[{"role": "user", "content": prompt}],
+                    model="llama3-70b-8192",
                     temperature=0.1,
-                    timeout=15,
-                    # Do not ask for JSON directly, expect raw string
+                    timeout=12,
                 )
-                raw_ai_res = completion.choices[0].message.content
-                if raw_ai_res and "No contacts found" not in raw_ai_res:
-                    parsed = _parse_raw_ai_contacts_with_source(raw_ai_res, page_url, page_content, country, occupation, gender)
-                    if parsed:
-                        all_ai_extracted_contacts.extend(parsed)
-                        logger.info(f"[{session_id}] ⚡ Groq extracted {len(parsed)} contacts from {page_url}")
+                raw_res = comp.choices[0].message.content
+                if raw_res:
+                    return _parse_raw_ai_contacts_with_source(raw_res, page_url, page_content, country, occupation, gender)
             except Exception as e:
-                logger.error(f"[{session_id}] Groq error for {page_url}: {e}")
+                logger.warning(f"[{session_id}] Groq extraction notice for {page_url}: {e}")
+            return []
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(_extract_page_groq, item) for item in crawled_content_with_urls]
+            for f in concurrent.futures.as_completed(futures):
+                res = f.result()
+                if res:
+                    all_ai_extracted_contacts.extend(res)
     
     extracted_records = all_ai_extracted_contacts
     
