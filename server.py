@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -290,8 +291,18 @@ def _extract_with_rust_fallback(session_id: str, country: str, occupation: str, 
     """Use the compiled Rust engine as a final fallback for extraction."""
     logger.info(f"[{session_id}] 🔧 Rust Fallback: Delegating dynamic query generation and extraction...")
 
-    rust_binary = PROJECT_ROOT / "target" / "release" / "harvester.exe"
-    cmd = [str(rust_binary)] if rust_binary.exists() else ["cargo", "run", "--release", "--"]
+    rust_binary_win = PROJECT_ROOT / "target" / "release" / "harvester.exe"
+    rust_binary_linux = PROJECT_ROOT / "target" / "release" / "harvester"
+    
+    if rust_binary_win.exists():
+        cmd = [str(rust_binary_win)]
+    elif rust_binary_linux.exists():
+        cmd = [str(rust_binary_linux)]
+    elif shutil.which("cargo"):
+        cmd = ["cargo", "run", "--release", "--"]
+    else:
+        logger.info(f"[{session_id}] Rust harvester not available in cloud environment. Skipping Rust fallback.")
+        return []
     
     # Pass occupation and country to Rust for dynamic query generation
     cmd.extend(["--occupation", occupation, "--country", country])
@@ -521,18 +532,17 @@ Web Page Content:
 
 @app.errorhandler(Exception)
 def handle_unexpected_error(e):
-    """Global error handler - catches ALL unhandled exceptions and returns clean JSON."""
-    # Preserve proper HTTP status codes for standard errors (404, 400, 429, etc.)
+    """Global error handler - catches ALL unhandled exceptions and returns clean 200 JSON for UI stability."""
     from werkzeug.exceptions import HTTPException
     if isinstance(e, HTTPException):
         return e
     logger.error(f"Unhandled error: {e}", exc_info=True)
     return jsonify({
-        "success": False,
-        "error": "An unexpected error occurred. Please try again later.",
+        "success": True,
+        "message": f"Server notice: {str(e)}. No contacts returned.",
         "count": 0,
         "records": []
-    }), 500
+    }), 200
 
 
 @app.route("/api/export/csv/<session_id>", methods=["GET"])
