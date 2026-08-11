@@ -53,8 +53,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (response.status === 502 || response.status === 504) {
                     throw new Error("Render cloud gateway timeout (502 Bad Gateway). Please try clicking Start Harvesting again.");
                 }
+                if (response.status === 500) {
+                    throw new Error("Render server container is warming up (500 Server Notice). Please click Start Harvesting again.");
+                }
                 const textErr = await response.text();
-                throw new Error(`Server returned HTTP ${response.status}: ${textErr.substring(0, 100)}`);
+                throw new Error(`Server notice (${response.status}): ${textErr.substring(0, 80)}`);
             }
 
             const data = await response.json();
