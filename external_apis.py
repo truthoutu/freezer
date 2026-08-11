@@ -28,7 +28,7 @@ def fetch_tavily_content(country: str, occupation: str, limit: int = 5) -> list[
         logger.info("Tavily: TAVILY_API_KEY not configured. Skipping Tavily deep web search.")
         return []
 
-    query = f"Real verified {occupation} directory contact phone numbers in {country}"
+    query = f'"{occupation}" phone directory contact list "{country}"'
     logger.info(f"Tavily: Performing deep AI web search for '{query}'...")
     
     payload = {
