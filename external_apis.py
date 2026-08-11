@@ -58,15 +58,11 @@ def fetch_serpapi_urls(country: str, occupation: str, limit: int = 10) -> list[s
         return []
 
     # Advanced Search Dork Templates
-    # This incorporates professional networks, official registries, and niche hubs.
     query_templates = [
-        f'site:linkedin.com/in/ "{occupation}" "{country}" contact',
+        f'"{occupation}" contact phone number directory "{country}"',
+        f'inurl:"member-directory" "{occupation}" "{country}"',
         f'"{occupation}" "{country}" "phone number"',
-        f'inurl:"member-directory" "{occupation}" "{country}"', # Professional associations
-        f'site:.gov "{occupation}" "contact" "{country}"', # Government registries
-        f'filetype:pdf "{occupation}" "directory" "{country}"', # PDF member lists
-        f'site:zocdoc.com OR site:healthgrades.com "{occupation}" "{country}"', # Medical
-        f'site:avvo.com OR site:martindale.com "{occupation}" "{country}"', # Legal
+        f'site:yellowpages.* "{occupation}" "{country}"',
         f'"{country}" "{occupation}" business directory'
     ]
     
