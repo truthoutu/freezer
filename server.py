@@ -290,9 +290,9 @@ def _fetch_content_firecrawl(session_id: str, target_urls: list, api_key: str) -
         try:
             client = Firecrawl(api_key=api_key)
             result = client.scrape(url=url, formats=["markdown"], only_main_content=True)
-            if result and hasattr(result, 'markdown') and result.markdown: #
+            if result and hasattr(result, 'markdown') and result.markdown:
                 logger.info(f"[{session_id}] ✅ Firecrawl scraped: {url} ({len(result.markdown)} chars)")
-                return result.markdown[:15000]
+                return (result.markdown[:15000], url) # Return content AND the original URL
         except Exception as e:
             logger.warning(f"[{session_id}] Firecrawl notice for {url}: {e}")
         return None
@@ -300,11 +300,9 @@ def _fetch_content_firecrawl(session_id: str, target_urls: list, api_key: str) -
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         futures = [executor.submit(_scrape_single, u) for u in target_urls[:5]]
         for f in concurrent.futures.as_completed(futures):
-            content = f.result()
-            if content:
-                # Need to associate content with its original URL for confidence scoring
-                # This is a simplification; ideally, _scrape_single would return (content, url)
-                crawled_content_with_urls.append((content, "unknown_firecrawl_url")) # Placeholder, actual URL needed
+            result_tuple = f.result()
+            if result_tuple:
+                crawled_content_with_urls.append(result_tuple)
 
     return crawled_content_with_urls
 
