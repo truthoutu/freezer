@@ -119,7 +119,7 @@ def enforce_contact_schema(records: list[dict], default_country: str) -> list[di
             logger.warning(f"Rejecting invalid phone number: {phone}")
             return None
 
-        verified_phone = v_res.get("phone", phone)
+        verified_phone = v_res.get("phone", phone) if isinstance(v_res, dict) else phone
         r["Phone Number"] = verified_phone
         return r
 
@@ -228,7 +228,7 @@ def _parse_raw_ai_contacts_with_source(
             "Source URL": source_url, # Add source URL here
             "Confidence Score": _calculate_confidence_score(source_url) # Calculate score here
         })
-    return valid_records
+    return parsed_contacts
 
 
 @app.route("/")
@@ -550,7 +550,7 @@ Web Page Content:
 """
                 comp = client.chat.completions.create(
                     messages=[{"role": "user", "content": prompt}],
-                    model="llama3-70b-8192",
+                    model="llama-3.3-70b-versatile",
                     temperature=0.1,
                     timeout=10,
                 )
