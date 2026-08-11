@@ -103,9 +103,11 @@ def sanitize_input(text: str) -> str:
     return clean.strip()[:100]
 
 
-def enforce_contact_schema(records: list[dict], default_country: str, default_occ: str, default_gen: str) -> list[dict]:
+def enforce_contact_schema(records: list[dict], default_country: str, default_occ: str, default_gen: str, raw_web_text: str = "") -> list[dict]:
     """Validate and enforce consistent contact data schema."""
     valid_records = []
+    clean_raw_digits = re.sub(r"\D", "", raw_web_text) if raw_web_text else ""
+
     for r in records:
         if not isinstance(r, dict):
             continue
@@ -113,34 +115,34 @@ def enforce_contact_schema(records: list[dict], default_country: str, default_oc
         if not phone or re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", phone):
             continue
 
+        # VERBATIM TRUTH RULE: Verify phone digits exist verbatim in raw scraped web text
+        if clean_raw_digits:
+            p_digits = re.sub(r"\D", "", phone)
+            if len(p_digits) >= 6 and (p_digits[-6:] not in clean_raw_digits):
+                logger.warning(f"Rejecting AI hallucinated phone number '{phone}' (digits not found in raw scraped text)")
+                continue
+
         raw_name = str(r.get("Name") or r.get("name") or "").strip()
         name_lower = raw_name.lower()
-        # Reject generic business service desks, hotlines, or directory titles
-        if any(term in name_lower for term in ["dienst", "hotline", "service desk", "customer care", "helpdesk", "call center", "emergency line"]):
+        
+        # KILL HALLUCINATION / PLACEHOLDERS: Require real name
+        if not raw_name or len(raw_name) < 3 or "not available" in name_lower or raw_name in ["N/A", "Unknown", "Verified Contact"]:
+            continue
+            
+        # Reject generic business service desks, web terms, or directory titles
+        if any(term in name_lower for term in ["dienst", "hotline", "service desk", "customer care", "helpdesk", "call center", "emergency line", "privacy policy", "cookie", "website", "phone number"]):
             continue
 
-        if not raw_name or "not available" in name_lower or raw_name in ["N/A", "Unknown"]:
-            name = "Verified Contact"
-        else:
-            name = raw_name
+        name = raw_name
 
         raw_occ = str(r.get("Occupation") or r.get("occupation") or "").strip()
-        if not raw_occ or "not available" in raw_occ.lower() or raw_occ in ["N/A", "Unknown"]:
-            occ = default_occ
-        else:
-            occ = raw_occ
+        occ = raw_occ if raw_occ and "not available" not in raw_occ.lower() and raw_occ not in ["N/A", "Unknown"] else default_occ
 
         raw_gen = str(r.get("Gender (Inferred)") or r.get("gender") or "").strip()
-        if not raw_gen or "not available" in raw_gen.lower() or raw_gen in ["N/A", "Unknown"]:
-            gender = default_gen
-        else:
-            gender = raw_gen
+        gender = raw_gen if raw_gen and "not available" not in raw_gen.lower() and raw_gen not in ["N/A", "Unknown"] else default_gen
 
         raw_country = str(r.get("Country") or r.get("country") or "").strip()
-        if not raw_country or "not available" in raw_country.lower() or raw_country in ["N/A", "Unknown"]:
-            country_val = default_country
-        else:
-            country_val = raw_country
+        country_val = raw_country if raw_country and "not available" not in raw_country.lower() and raw_country not in ["N/A", "Unknown"] else default_country
 
         # STRICT VALIDATION: Numverify must return a valid response.
         country_code = COUNTRY_ISO_MAP.get(country_val, "")
@@ -335,26 +337,35 @@ def api_harvest():
     if not crawled_content and target_urls:
         crawled_content = _fetch_content_direct(session_id, target_urls)
     
+    # TRUTH RULE: If no live web page content was retrieved, return empty immediately. NEVER hallucinate!
+    if not crawled_content:
+        logger.warning(f"[{session_id}] ⚠️ 0 pages scraped from target URLs. Returning empty result to prevent AI hallucination.")
+        return jsonify({
+            "success": False,
+            "error": "Unable to scrape live web pages from target URLs. Please verify target URLs or proxy configuration.",
+            "session_id": session_id,
+            "count": 0,
+            "records": []
+        }), 404
+
     # STEP 3: AI Extraction (Cerebras -> Groq)
     extracted_records = []
-    combined_content = "\n\n---PAGE BREAK---\n\n".join(crawled_content) if crawled_content else ""
+    combined_content = "\n\n---PAGE BREAK---\n\n".join(crawled_content)
+    raw_digits_set = set(re.findall(r"\d{6,}", combined_content))
     
     if cerebras_key and Cerebras:
         logger.info(f"[{session_id}] 🧠 Cerebras: Extracting contacts from {len(crawled_content)} pages...")
         for model_name in ["gemma-4-31b", "gpt-oss-120b", "zai-glm-4.7"]:
             try:
                 client = Cerebras(api_key=cerebras_key)
-                prompt = f"""From the web page text below, extract contact information for individuals who appear to be real people.
-Do NOT extract information for general businesses, government services, or hotlines.
-Only extract contacts that have a real telephone number explicitly present in the text. Extract up to {limit} contacts.
+                prompt = f"""CRITICAL INSTRUCTION: Extract ONLY contact entries whose name AND telephone number are explicitly written verbatim in the web page text below.
+Do NOT guess, invent, or extrapolate information. If no real person with an explicit phone number is present in the text, return empty JSON: {{"contacts": []}}.
 
 Context:
 - Default Country: {country}
 - Default Occupation: {occupation}
-- Default Gender: {gender}
 
-If a person's occupation or gender is not mentioned, leave those fields blank.
-Return valid JSON format: {{"contacts": [{{"Name": "...", "Occupation": "...", "Gender (Inferred)": "...", "Phone Number": "...", "Country": "{country}"}}]}}
+Return valid JSON format: {{"contacts": [{{"Name": "...", "Occupation": "{occupation}", "Gender (Inferred)": "{gender}", "Phone Number": "...", "Country": "{country}"}}]}}
 
 Web Page Content:
 {combined_content[:40000]}
@@ -410,8 +421,8 @@ Web Page Content:
             "records": []
         }), 404
 
-    # Enforce Schema & Validation
-    validated_records = enforce_contact_schema(extracted_records, country, occupation, gender)
+    # Enforce Schema & Verbatim Scrape Validation
+    validated_records = enforce_contact_schema(extracted_records, country, occupation, gender, raw_web_text=combined_content)
     logger.info(f"[{session_id}] After schema validation: {len(validated_records)}/{len(extracted_records)} contacts kept")
 
     if validated_records:
