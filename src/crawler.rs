@@ -186,12 +186,12 @@ impl Crawler {
                     let client = match client_builder.build() {
                         Ok(c) => c,
                         Err(e) => {
-                            eprintln!("FATAL: Failed to build HTTP client: {}. Aborting task.", e);
+                            eprintln!("ERROR: Failed to build HTTP client for {}: {}. Aborting task.", url_str, e);
                             return; // Exit this spawned task
                         }
                     };
                     
-                    // Retry logic with exponential backoff
+                    // Retry logic with exponential backoff (3 attempts)
                     for attempt in 0..3 {
                         if attempt > 0 {
                             tokio::time::sleep(std::time::Duration::from_secs(2_u64.pow(attempt))).await;

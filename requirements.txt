@@ -9,4 +9,6 @@ gunicorn>=21.2.0
 requests>=2.31.0
 firecrawl-py>=0.0.16
 tavily-python>=0.3.0
+beautifulsoup4>=4.12.0
+
 

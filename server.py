@@ -401,7 +401,8 @@ def api_harvest():
     
     if cerebras_key and Cerebras:
         logger.info(f"[{session_id}] 🧠 Cerebras: Extracting contacts from {len(crawled_content)} pages...")
-        for model_name in ["gemma-4-31b", "gpt-oss-120b", "zai-glm-4.7"]:
+        cerebras_models = os.getenv("CEREBRAS_MODELS", "gemma-4-31b").strip().split(',')
+        for model_name in cerebras_models:
             try:
                 client = Cerebras(api_key=cerebras_key)
                 prompt = f"""CRITICAL INSTRUCTION: Extract ONLY contact entries whose name AND telephone number are explicitly written verbatim in the web page text below.
@@ -439,7 +440,7 @@ Web Page Content:
         try:
             client = Groq(api_key=groq_key)
             completion = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="llama3-70b-8192",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 timeout=15,

@@ -4,6 +4,7 @@ Provides live Google search URL discovery via SerpAPI and active line validation
 """
 
 import os
+from bs4 import BeautifulSoup
 import re
 import logging
 import requests
@@ -199,9 +200,10 @@ def fetch_duckduckgo_urls(country: str, occupation: str, cities: list, limit: in
             resp = requests.post("https://html.duckduckgo.com/html/", data={"q": query}, headers=headers, timeout=8)
             if resp.status_code == 200:
                 # Basic regex to find result URLs in DDG's simple HTML
-                found = re.findall(r'a class="result__a" href="([^"]+)"', resp.text)
-                for url in found:
-                    clean_url = requests.utils.unquote(url.split("uddg=")[-1])
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                links = soup.find_all('a', class_='result__a')
+                for link in links:
+                    clean_url = requests.utils.unquote(link['href'].split("uddg=")[-1])
                     if clean_url.startswith("http"):
                         urls.add(clean_url)
             else:
