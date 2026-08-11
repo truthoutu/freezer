@@ -90,6 +90,10 @@ def validate_api_keys():
     if not groq_key:
         logger.warning("Groq: GROQ_API_KEY is missing. AI extraction fallback will be limited.")
 
+    hunter_key = os.getenv("HUNTER_API_KEY", "").strip()
+    if hunter_key:
+        logger.info("Hunter.io: HUNTER_API_KEY is configured for domain B2B enrichment.")
+
 
 def fetch_serpapi_urls(country: str, occupation: str, limit: int = 10) -> list[str]:
     """
@@ -236,3 +240,42 @@ def verify_phone_number(phone: str, default_country_code: str = "") -> dict:
 
     # If API call fails, we cannot guarantee validity.
     return None
+
+
+HUNTER_API_KEY = os.getenv("HUNTER_API_KEY", "").strip()
+
+def fetch_hunter_domain_leads(domain: str) -> list[dict]:
+    """
+    Query Hunter.io Domain Search API to retrieve verified individual decision makers at a target domain.
+    """
+    if not (HUNTER_API_KEY and domain):
+        return []
+        
+    url = f"https://api.hunter.io/v2/domain-search?domain={domain}&api_key={HUNTER_API_KEY}"
+    try:
+        resp = requests.get(url, timeout=3)
+        if resp.status_code == 200:
+            data = resp.json().get("data", {})
+            emails = data.get("emails", [])
+            leads = []
+            for item in emails[:5]:
+                first = item.get("first_name") or ""
+                last = item.get("last_name") or ""
+                full_name = f"{first} {last}".strip()
+                if not full_name:
+                    continue
+                leads.append({
+                    "Name": full_name,
+                    "Email": item.get("value"),
+                    "Occupation": item.get("position") or "Practitioner",
+                    "Phone Number": item.get("phone_number") or "",
+                    "Confidence Score": item.get("confidence", 80),
+                    "Source URL": f"https://{domain}"
+                })
+            return leads
+        elif resp.status_code == 429:
+            logger.warning("Hunter.io notice: Account restricted or rate limited. Please log into hunter.io to verify account.")
+    except Exception as e:
+        logger.warning(f"Hunter.io lookup notice for {domain}: {e}")
+    return []
+
