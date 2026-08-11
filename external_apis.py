@@ -51,7 +51,7 @@ def fetch_tavily_content(country: str, occupation: str, limit: int = 5) -> list[
                 raw_c = r.get("raw_content") or r.get("content") or ""
                 if len(raw_c) > 200:
                     contents.append(raw_c[:25000])
-            logger.info(f"Tavily successfully scraped {len(contents)} deep web content pages.")
+            logger.info(f"Tavily successfully scraped {len(contents)} deep web content pages.") #
             return contents
         else:
             logger.warning(f"Tavily error: HTTP {resp.status_code} - {resp.text[:150]}")

@@ -89,6 +89,8 @@ except ImportError:
 
 def check_rate_limit(client_ip: str) -> bool:
     """Rate limit per client IP."""
+    # WARNING: This in-memory store is not suitable for production with multiple workers (e.g., Gunicorn).
+    # Each worker will have its own rate limit store, defeating the purpose. Use Redis for production.
     now = time.time()
     timestamps = RATE_LIMIT_STORE[client_ip]
     RATE_LIMIT_STORE[client_ip] = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW]
@@ -98,6 +100,33 @@ def check_rate_limit(client_ip: str) -> bool:
     return True
 
 
+def enforce_contact_schema(records: list[dict], default_country: str) -> list[dict]:
+    """Validate and enforce consistent contact data schema, primarily Numverify validation."""
+    valid_records = []
+
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        phone = str(r.get("Phone Number") or "").strip()
+        if not phone:
+            continue
+
+        country_val = str(r.get("Country") or default_country).strip()
+        country_code = COUNTRY_ISO_MAP.get(country_val, "")
+        v_res = verify_phone_number(phone, default_country_code=country_code)
+
+        if v_res and v_res.get("valid") is False:
+            logger.warning(f"Rejecting invalid phone number: {phone}")
+            continue
+
+        verified_phone = v_res.get("phone", phone)
+
+        # Update phone number with verified one
+        r["Phone Number"] = verified_phone
+        valid_records.append(r) # Append the modified record
+    return valid_records
+
+
 def sanitize_input(text: str) -> str:
     if not text or not isinstance(text, str):
         return ""
@@ -105,63 +134,93 @@ def sanitize_input(text: str) -> str:
     return clean.strip()[:100]
 
 
-def enforce_contact_schema(records: list[dict], default_country: str, default_occ: str, default_gen: str, raw_web_text: str = "") -> list[dict]:
-    """Validate and enforce consistent contact data schema."""
-    valid_records = []
-    clean_raw_digits = re.sub(r"\D", "", raw_web_text) if raw_web_text else ""
+def _calculate_confidence_score(url: str) -> int:
+    """Calculates a confidence score (1-100) based on the source URL."""
+    url_lower = url.lower()
 
-    for r in records:
-        if not isinstance(r, dict):
-            continue
-        phone = str(r.get("Phone Number") or r.get("phone") or "").strip()
-        if not phone or re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", phone):
+    # Tier 1: Official Government/Educational/Highly Regulated
+    if ".gov" in url_lower or ".edu" in url_lower or "handelsregister.de" in url_lower:
+        return 100
+    # Tier 2: Reputable Professional Directories (Medical, Legal, etc.)
+    if "zocdoc.com" in url_lower or "avvo.com" in url_lower or "clutch.co" in url_lower or "martindale.com" in url_lower or "doctena.de" in url_lower or "jameda.de" in url_lower or "healthgrades.com" in url_lower:
+        return 90
+    # Tier 3: Major Business Directories
+    if "yellowpages." in url_lower or "yelp.com" in url_lower or "whitepages.com" in url_lower or "angi.com" in url_lower or "houzz.com" in url_lower or "brownbook.net" in url_lower or "hotfrog.com" in url_lower or "truelocal.com.au" in url_lower or "localsearch.com.au" in url_lower or "gelbeseiten.de" in url_lower or "dastelefonbuch.de" in url_lower or "local.ch" in url_lower or "pagesjaunes." in url_lower or "kompass.com" in url_lower:
+        return 80
+    # Tier 4: Professional Networking/Company Profiles
+    if "linkedin.com" in url_lower or "crunchbase.com" in url_lower or "xing.com" in url_lower or "glassdoor.com" in url_lower:
+        return 70
+    # Tier 5: General Directories / Less Specific
+    if "chamberofcommerce.com" in url_lower or "thumbtack.com" in url_lower or "bark.com" in url_lower or "foursquare.com" in url_lower or "freebusinessdirectory.com" in url_lower:
+        return 60
+    # Default for unknown or less specific sources
+    return 50
+
+
+def _parse_raw_ai_contacts_with_source(
+    raw_ai_output: str,
+    source_url: str,
+    raw_web_text_for_page: str,
+    default_country: str,
+    default_occ: str,
+    default_gen: str
+) -> list[dict]:
+    """
+    Parses raw AI string output, applies verbatim truth rule, and adds confidence score.
+    Expected format: "Name: ... | Phone: ... | Occupation: ... | Gender: ... | Country: ...\n---\n..."
+    """
+    parsed_contacts = []
+    contact_entries = raw_ai_output.strip().split("---")
+    clean_raw_digits_page = re.sub(r"\D", "", raw_web_text_for_page)
+
+    for entry in contact_entries:
+        entry = entry.strip()
+        if not entry:
             continue
 
-        # VERBATIM TRUTH RULE: Verify phone digits exist verbatim in raw scraped web text
-        if clean_raw_digits:
+        contact_data = {}
+        lines = entry.split('\n')
+        for line in lines:
+            if ":" in line:
+                key, value = line.split(":", 1)
+                contact_data[key.strip()] = value.strip()
+
+        phone = contact_data.get("Phone") or contact_data.get("Phone Number")
+        name = contact_data.get("Name")
+        occupation = contact_data.get("Occupation")
+        gender = contact_data.get("Gender") or contact_data.get("Gender (Inferred)")
+        country = contact_data.get("Country")
+
+        # Apply Verbatim Truth Rule
+        if phone:
             p_digits = re.sub(r"\D", "", phone)
-            if len(p_digits) >= 6 and (p_digits[-6:] not in clean_raw_digits):
-                logger.warning(f"Rejecting AI hallucinated phone number '{phone}' (digits not found in raw scraped text)")
+            if len(p_digits) >= 6 and (p_digits[-6:] not in clean_raw_digits_page):
+                logger.warning(f"Rejecting AI hallucinated phone number '{phone}' (digits not found in raw scraped text for {source_url})")
                 continue
+        else:
+            continue # Phone number is mandatory
 
-        raw_name = str(r.get("Name") or r.get("name") or "").strip()
-        name_lower = raw_name.lower()
-        
-        # KILL HALLUCINATION / PLACEHOLDERS: Require real name
-        if not raw_name or len(raw_name) < 3 or "not available" in name_lower or raw_name in ["N/A", "Unknown", "Verified Contact"]:
-            continue
-            
+        # Apply basic schema enforcement and defaults
+        name = name if name and len(name) >= 3 and "not available" not in name.lower() and name not in ["N/A", "Unknown", "Verified Contact"] else None
+        if not name: continue # Name is mandatory
+
+        occupation = occupation if occupation and "not available" not in occupation.lower() and occupation not in ["N/A", "Unknown"] else default_occ
+        gender = gender if gender and "not available" not in gender.lower() and gender not in ["N/A", "Unknown"] else default_gen
+        country = country if country and "not available" not in country.lower() and country not in ["N/A", "Unknown"] else default_country
+
         # Reject generic business service desks, web terms, or directory titles
+        name_lower = name.lower()
         if any(term in name_lower for term in ["dienst", "hotline", "service desk", "customer care", "helpdesk", "call center", "emergency line", "privacy policy", "cookie", "website", "phone number"]):
             continue
 
-        name = raw_name
-
-        raw_occ = str(r.get("Occupation") or r.get("occupation") or "").strip()
-        occ = raw_occ if raw_occ and "not available" not in raw_occ.lower() and raw_occ not in ["N/A", "Unknown"] else default_occ
-
-        raw_gen = str(r.get("Gender (Inferred)") or r.get("gender") or "").strip()
-        gender = raw_gen if raw_gen and "not available" not in raw_gen.lower() and raw_gen not in ["N/A", "Unknown"] else default_gen
-
-        raw_country = str(r.get("Country") or r.get("country") or "").strip()
-        country_val = raw_country if raw_country and "not available" not in raw_country.lower() and raw_country not in ["N/A", "Unknown"] else default_country
-
-        # STRICT VALIDATION: Numverify must return a valid response.
-        country_code = COUNTRY_ISO_MAP.get(country_val, "")
-        v_res = verify_phone_number(phone, default_country_code=country_code)
-
-        if not v_res.get("valid", True):
-            logger.warning(f"Rejecting invalid phone number: {phone}")
-            continue
-
-        verified_phone = v_res.get("phone", phone)
-
-        valid_records.append({
+        parsed_contacts.append({
             "Name": name,
-            "Occupation": occ,
+            "Occupation": occupation,
             "Gender (Inferred)": gender,
-            "Phone Number": verified_phone,
-            "Country": country_val
+            "Phone Number": phone,
+            "Country": country,
+            "Source URL": source_url, # Add source URL here
+            "Confidence Score": _calculate_confidence_score(source_url) # Calculate score here
         })
     return valid_records
 
@@ -203,7 +262,7 @@ def get_history():
 
 def _get_target_urls(session_id: str, country: str, occupation: str, custom_urls: list) -> list[str]:
     """Determine the final list of URLs to be scraped."""
-    if custom_urls and isinstance(custom_urls, list) and len(custom_urls) > 0:
+    if custom_urls and isinstance(custom_urls, list) and len(custom_urls) > 0: #
         target_urls = [url for url in custom_urls if url.startswith('http')]
         logger.info(f"[{session_id}] Using {len(target_urls)} custom URLs provided by user")
         return target_urls
@@ -219,19 +278,19 @@ def _get_target_urls(session_id: str, country: str, occupation: str, custom_urls
     return target_urls
 
 
-def _fetch_content_firecrawl(session_id: str, target_urls: list, api_key: str) -> list[str]:
+def _fetch_content_firecrawl(session_id: str, target_urls: list, api_key: str) -> list[tuple[str, str]]:
     """Fetch web content concurrently using Firecrawl API across parallel threads."""
     if not (api_key and Firecrawl and target_urls):
         return []
     
     logger.info(f"[{session_id}] 🚀 Firecrawl Parallel Engine: Scraping {len(target_urls[:5])} URLs concurrently...")
-    crawled_content = []
+    crawled_content_with_urls = []
     
     def _scrape_single(url: str):
         try:
             client = Firecrawl(api_key=api_key)
             result = client.scrape(url=url, formats=["markdown"], only_main_content=True)
-            if result and hasattr(result, 'markdown') and result.markdown:
+            if result and hasattr(result, 'markdown') and result.markdown: #
                 logger.info(f"[{session_id}] ✅ Firecrawl scraped: {url} ({len(result.markdown)} chars)")
                 return result.markdown[:15000]
         except Exception as e:
@@ -241,16 +300,16 @@ def _fetch_content_firecrawl(session_id: str, target_urls: list, api_key: str) -
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         futures = [executor.submit(_scrape_single, u) for u in target_urls[:5]]
         for f in concurrent.futures.as_completed(futures):
-            res = f.result()
-            if res:
-                crawled_content.append(res)
+            content = f.result()
+            if content:
+                # Need to associate content with its original URL for confidence scoring
+                # This is a simplification; ideally, _scrape_single would return (content, url)
+                crawled_content_with_urls.append((content, "unknown_firecrawl_url")) # Placeholder, actual URL needed
 
-    return crawled_content
+    return crawled_content_with_urls
 
-
-def _fetch_content_direct(session_id: str, target_urls: list) -> list[str]:
+def _fetch_content_direct(session_id: str, target_urls: list) -> list[tuple[str, str]]:
     """Fetch web content using parallel HTTP requests with proxy rotation."""
-    logger.info(f"[{session_id}] 🌐 Direct HTTP Parallel Engine: Fetching {len(target_urls[:5])} pages concurrently...")
     import requests
     crawled_content = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
@@ -268,16 +327,17 @@ def _fetch_content_direct(session_id: str, target_urls: list) -> list[str]:
 
     def _fetch_single(idx: int, url: str):
         try:
+            logger.info(f"[{session_id}] 🌐 Direct HTTP: Fetching {url}...")
             p_dict = proxies_list[idx % len(proxies_list)] if proxies_list else None
             resp = requests.get(url, headers=headers, proxies=p_dict, timeout=6)
             if resp.status_code == 200 and len(resp.text) > 300:
                 logger.info(f"[{session_id}] ✅ Direct HTTP fetched: {url} ({len(resp.text)} chars)")
-                return resp.text[:20000]
+                return (resp.text[:20000], url) # Return content and URL
         except Exception as e:
             logger.warning(f"[{session_id}] Direct fetch notice for {url}: {e}")
         return None
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor: # Reduced concurrency for direct fetch
         futures = [executor.submit(_fetch_single, i, u) for i, u in enumerate(target_urls[:5])]
         for f in concurrent.futures.as_completed(futures):
             res = f.result()
@@ -372,86 +432,139 @@ def api_harvest():
     target_urls = _get_target_urls(session_id, country, occupation, data.get("custom_urls", []))
     
     # STEP 2: Thorough Web Content Retrieval (Firecrawl -> Tavily -> Direct HTTP Fallback)
+    # Now returns list of (content, url) tuples
     firecrawl_key = os.getenv("FIRECRAWL_API_KEY", "").strip()
-    crawled_content = _fetch_content_firecrawl(session_id, target_urls, firecrawl_key)
+    crawled_content_with_urls = _fetch_content_firecrawl(session_id, target_urls, firecrawl_key)
 
     # Tavily Deep AI Web Search Integration
-    tavily_content = fetch_tavily_content(country, occupation, limit=5)
-    if tavily_content:
-        crawled_content.extend(tavily_content)
+    tavily_raw_contents = fetch_tavily_content(country, occupation, limit=5)
+    if tavily_raw_contents:
+        # Tavily doesn't return source URLs directly in this format, use a placeholder
+        crawled_content_with_urls.extend([(c, "tavily_ai_search") for c in tavily_raw_contents])
 
-    if not crawled_content and target_urls:
-        crawled_content = _fetch_content_direct(session_id, target_urls)
+    if not crawled_content_with_urls and target_urls:
+        crawled_content_with_urls = _fetch_content_direct(session_id, target_urls)
     
+    # Extract just the content for the Rust fallback, if needed
+    crawled_content_strings = [content for content, _ in crawled_content_with_urls]
+
     # TRUTH RULE: If no live web page content was retrieved, return empty immediately. NEVER hallucinate!
-    if not crawled_content:
+    if not crawled_content_with_urls:
         logger.warning(f"[{session_id}] ⚠️ 0 pages scraped from target URLs. Returning empty result to prevent AI hallucination.")
         return jsonify({
             "success": False,
             "error": "Unable to scrape live web pages from target URLs. Please verify target URLs or proxy configuration.",
             "session_id": session_id,
             "count": 0,
-            "records": []
+            "records": [],
         }), 404
 
     # STEP 3: AI Extraction (Cerebras -> Groq)
     extracted_records = []
-    combined_content = "\n\n---PAGE BREAK---\n\n".join(crawled_content)
-    raw_digits_set = set(re.findall(r"\d{6,}", combined_content))
-    
+
+    # Process each page individually with AI for source tracking and confidence scoring
+    all_ai_extracted_contacts = []
     if cerebras_key and Cerebras:
-        logger.info(f"[{session_id}] 🧠 Cerebras: Extracting contacts from {len(crawled_content)} pages...")
-        cerebras_models = os.getenv("CEREBRAS_MODELS", "gemma-4-31b").strip().split(',')
-        for model_name in cerebras_models:
-            try:
-                client = Cerebras(api_key=cerebras_key)
-                prompt = f"""CRITICAL INSTRUCTION: Extract ONLY contact entries whose name AND telephone number are explicitly written verbatim in the web page text below.
+        logger.info(f"[{session_id}] 🧠 Cerebras: Extracting contacts from {len(crawled_content_with_urls)} pages...")
+        for page_content, page_url in crawled_content_with_urls:
+            cerebras_models = os.getenv("CEREBRAS_MODELS", "gemma-4-31b").strip().split(',')
+            for model_name in cerebras_models:
+                try:
+                    client = Cerebras(api_key=cerebras_key)
+                    # Raw Stream Intelligence: Ask for raw strings, include source URL in prompt
+                    prompt = f"""CRITICAL INSTRUCTION: Extract ONLY contact entries whose name AND telephone number are explicitly written verbatim in the web page text below.
 Do NOT guess, invent, or extrapolate information. If no real person with an explicit phone number is present in the text, return empty JSON: {{"contacts": []}}.
 
 Context:
 - Default Country: {country}
 - Default Occupation: {occupation}
+- Source URL: {page_url}
 
-Return valid JSON format: {{"contacts": [{{"Name": "...", "Occupation": "{occupation}", "Gender (Inferred)": "{gender}", "Phone Number": "...", "Country": "{country}"}}]}}
+Return each contact as a block of raw verbatim strings, delimited by "---".
+Example format:
+Name: John Doe
+Phone: +1 555-123-4567
+Occupation: Doctor
+Gender: Male
+Country: United States
+---
+Name: Jane Smith
+Phone: +1 555-987-6543
+Occupation: Nurse
+Gender: Female
+Country: United States
+---
 
 Web Page Content:
-{combined_content[:40000]}
+{page_content[:40000]}
+"""
+                    completion = client.chat.completions.create(
+                        messages=[{"role": "user", "content": prompt}],
+                        model=model_name,
+                        temperature=0.1,
+                        max_completion_tokens=2048,
+                        # Do not ask for JSON directly, expect raw string
+                    )
+                    raw_ai_res = completion.choices[0].message.content
+                    if raw_ai_res and "No contacts found" not in raw_ai_res:
+                        parsed = _parse_raw_ai_contacts_with_source(raw_ai_res, page_url, page_content, country, occupation, gender)
+                        if parsed:
+                            all_ai_extracted_contacts.extend(parsed)
+                            logger.info(f"[{session_id}] ⚡ Cerebras ({model_name}) extracted {len(parsed)} contacts from {page_url}")
+                            break # Success for this page, stop trying other models
+                    logger.warning(f"[{session_id}] Cerebras model {model_name} returned no contacts for {page_url}.")
+                except Exception as e:
+                    logger.error(f"[{session_id}] Cerebras model {model_name} failed for {page_url}: {e}")
+    
+    # If Cerebras failed for a page, try Groq (still fast)
+    if not all_ai_extracted_contacts and groq_key and Groq and crawled_content_with_urls:
+        logger.info(f"[{session_id}] 🧠 Groq: Backup extraction for {len(crawled_content_with_urls)} pages...")
+        for page_content, page_url in crawled_content_with_urls:
+            try:
+                client = Groq(api_key=groq_key)
+                prompt = f"""CRITICAL INSTRUCTION: Extract ONLY contact entries whose name AND telephone number are explicitly written verbatim in the web page text below.
+Do NOT guess, invent, or extrapolate information. If no real person with an explicit phone number is present in the text, return empty string or "No contacts found".
+
+Context:
+- Default Country: {country}
+- Default Occupation: {occupation}
+- Source URL: {page_url}
+
+Return each contact as a block of raw verbatim strings, delimited by "---".
+Example format:
+Name: John Doe
+Phone: +1 555-123-4567
+Occupation: Doctor
+Gender: Male
+Country: United States
+---
+Name: Jane Smith
+Phone: +1 555-987-6543
+Occupation: Nurse
+Gender: Female
+Country: United States
+---
+
+Web Page Content:
+{page_content[:40000]}
 """
                 completion = client.chat.completions.create(
+                    model="llama3-70b-8192",
                     messages=[{"role": "user", "content": prompt}],
-                    model=model_name,
                     temperature=0.1,
-                    max_completion_tokens=2048,
-                    response_format={"type": "json_object"}
+                    timeout=15,
+                    # Do not ask for JSON directly, expect raw string
                 )
-                ai_res = json.loads(completion.choices[0].message.content)
-                if "contacts" in ai_res and isinstance(ai_res["contacts"], list):
-                    if ai_res["contacts"]:
-                        extracted_records = ai_res["contacts"]
-                        logger.info(f"[{session_id}] ⚡ Cerebras ({model_name}) extracted {len(extracted_records)} contacts in seconds")
-                        break # Success, stop trying other models
-                logger.warning(f"[{session_id}] Cerebras model {model_name} returned no contacts.")
+                raw_ai_res = completion.choices[0].message.content
+                if raw_ai_res and "No contacts found" not in raw_ai_res:
+                    parsed = _parse_raw_ai_contacts_with_source(raw_ai_res, page_url, page_content, country, occupation, gender)
+                    if parsed:
+                        all_ai_extracted_contacts.extend(parsed)
+                        logger.info(f"[{session_id}] ⚡ Groq extracted {len(parsed)} contacts from {page_url}")
             except Exception as e:
-                logger.error(f"[{session_id}] Cerebras model {model_name} failed: {e}")
+                logger.error(f"[{session_id}] Groq error for {page_url}: {e}")
     
-    # If Cerebras failed, try Groq (still fast)
-    if not extracted_records and groq_key and Groq and combined_content:
-        logger.info(f"[{session_id}] 🧠 Groq: Backup extraction...")
-        try:
-            client = Groq(api_key=groq_key)
-            completion = client.chat.completions.create(
-                model="llama3-70b-8192",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                timeout=15,
-                response_format={"type": "json_object"}
-            )
-            ai_res = json.loads(completion.choices[0].message.content)
-            if "contacts" in ai_res and isinstance(ai_res["contacts"], list):
-                extracted_records = ai_res["contacts"]
-                logger.info(f"[{session_id}] ⚡ Groq extracted {len(extracted_records)} contacts")
-        except Exception as e:
-            logger.error(f"[{session_id}] Groq error: {e}")
+    extracted_records = all_ai_extracted_contacts
     
     # STEP 4: Rust Fallback
     if not extracted_records:
@@ -462,14 +575,14 @@ Web Page Content:
         logger.info(f"[{session_id}] ℹ️ Harvest query completed with 0 matching contacts.")
         return jsonify({
             "success": True,
-            "message": f"No valid contact numbers found for '{occupation}' in {country}. Try choosing another profession or country.",
+            "message": "No contacts matched your criteria. Try selecting 'Any Gender' or adjusting the occupation keyword.",
             "session_id": session_id,
             "count": 0,
             "records": []
         }), 200
 
     # Enforce Schema & Verbatim Scrape Validation
-    validated_records = enforce_contact_schema(extracted_records, country, occupation, gender, raw_web_text=combined_content)
+    validated_records = enforce_contact_schema(extracted_records, country) # Verbatim check moved to _parse_raw_ai_contacts_with_source
     logger.info(f"[{session_id}] After schema validation: {len(validated_records)}/{len(extracted_records)} contacts kept")
 
     if validated_records:

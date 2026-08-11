@@ -1,6 +1,7 @@
 use crate::extractor::{Extractor, RawContact};
 use rand::seq::SliceRandom;
 use reqwest::{Client, Proxy};
+use rusqlite::{Connection, Result};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -47,25 +48,80 @@ fn generate_dynamic_queries(occupation: &str, country: &str) -> Vec<String> {
     let occupation_query = format!("\"{}\"", occupation);
     let country_query = format!("\"{}\"", country);
 
-    let query_templates = vec![
-        // Professional Registries
-        format!("site:.org OR site:.gov {occupation_query} {country_query} member directory OR registry"),
-        format!("intitle:\"member list\" OR inurl:\"registry\" {occupation_query} {country_query}"),
-        format!("(site:*.med.pro OR site:*.legal.pro) {occupation_query} {country_query}"), // Example TLDs
+    let mut domains = Vec::new();
+    match country {
+        "United States" | "Canada" => {
+            domains.extend(vec![
+                // Directories
+                "yelp.com", "yellowpages.com", "whitepages.com", "angi.com", "houzz.com",
+                "yellowpages.ca", "brownbook.net", "chamberofcommerce.com", "pagesjaunes.ca",
+                // Niche & Professional
+                "zocdoc.com", "avvo.com", "thumbtack.com", "linkedin.com", "crunchbase.com",
+            ]);
+        }
+        "Germany" | "Switzerland" => {
+            domains.extend(vec![
+                // Directories
+                "yellowpages.ch", "local.ch", "gelbeseiten.de", "herold.de", "dastelefonbuch.de",
+                "kompass.com", "brownbook.net",
+                // Professional
+                "handelsregister.de", "linkedin.com", "xing.com",
+            ]);
+        }
+        "Australia" => {
+            domains.extend(vec![
+                // Directories
+                "yellowpages.com.au", "truelocal.com.au", "whitepages.com.au",
+                "yellowpages.co.nz", "hotfrog.com.au", "localsearch.com.au",
+            ]);
+        }
+        _ => { // Fallback to a general list if country doesn't match
+            domains.extend(vec![
+                "linkedin.com", "yellowpages.com", "yelp.com", "kompass.com", "brownbook.net"
+            ]);
+        }
+    };
 
-        // Niche Platforms
-        format!("site:clutch.co OR site:thumbtack.com OR site:bark.com {occupation_query} {country_query} contact"),
+    let mut query_templates = Vec::new();
+    for domain in domains {
+        query_templates.push(format!("site:{} {} {} contact OR phone", domain, occupation_query, country_query));
+    }
 
-        // Corporate Engines
-        format!("site:crunchbase.com OR site:angel.co {occupation_query} {country_query} people"),
-
-        // Local Aggregators
-        format!("site:yelp.com OR site:hotfrog.com {occupation_query} {country_query}"),
-    ];
+    // Add broader, non-site-specific queries to discover new sources
+    query_templates.push(format!("\"{occupation}\" member directory {country_query}"));
+    if country == "Australia" { // Add niche discovery for Australia as requested
+        query_templates.push(format!("site:.com.au \"find a doctor\" OR \"health professionals\" list"));
+    }
 
     query_templates.into_iter().map(|q| {
         format!("https://www.google.com/search?q={}", urlencoding::encode(&q))
     }).collect()
+}
+
+/// The Memory Vault: Fetches all existing phone numbers from the SQLite DB.
+fn get_seen_phones_from_db(db_path: &PathBuf) -> Result<std::collections::HashSet<String>, rusqlite::Error> {
+    let conn = Connection::open(db_path)?;
+    let mut stmt = conn.prepare("SELECT phone FROM contact_leads")?;
+    let phone_iter = stmt.query_map([], |row| {
+        let phone: String = row.get(0)?;
+        // Normalize to digits only for accurate deduplication
+        Ok(phone.chars().filter(|c| c.is_digit(10)).collect::<String>())
+    })?;
+
+    let mut seen_phones = std::collections::HashSet::new();
+    for phone in phone_iter {
+        if let Ok(p) = phone {
+            if !p.is_empty() {
+                seen_phones.insert(p);
+            }
+        }
+    }
+    Ok(seen_phones)
+}
+
+/// Normalizes a phone number string to digits only.
+fn normalize_phone(phone: &str) -> String {
+    phone.chars().filter(|c| c.is_digit(10)).collect()
 }
 
 pub struct Crawler {
@@ -191,15 +247,15 @@ impl Crawler {
                         }
                     };
                     
-                    // Retry logic with exponential backoff (3 attempts)
+                    // Retry logic with exponential backoff (3 attempts) for network resilience
                     for attempt in 0..3 {
                         if attempt > 0 {
                             tokio::time::sleep(std::time::Duration::from_secs(2_u64.pow(attempt))).await;
                         }
                         
                         match client.get(&url_str).send().await {
-                            Ok(resp) => {
-                                if resp.status().is_success() {
+                            Ok(resp) => { // Smart Pivot: Detect 403/429 and log, but don't stall
+                                if resp.status().is_success() { 
                                     match resp.text().await {
                                         Ok(html) => {
                                             let contacts = extractor_clone.extract_contacts(&html, &url_str);
@@ -223,6 +279,11 @@ impl Crawler {
                                         }
                                     }
                                 } else {
+                                    if resp.status().as_u16() == 403 {
+                                        eprintln!("[Attempt {}] 🚫 403 Forbidden for {}. Pivoting to next task.", attempt + 1, url_str);
+                                    } else if resp.status().as_u16() == 429 {
+                                        eprintln!("[Attempt {}] ⏳ 429 Too Many Requests for {}. Pivoting to next task.", attempt + 1, url_str);
+                                    }
                                     eprintln!("[Attempt {}] HTTP {} for {}", attempt + 1, resp.status(), url_str);
                                 }
                             }
@@ -248,6 +309,22 @@ impl Crawler {
                 _ = &mut timeout => {
                     break;
                 }
+            }
+        }
+
+        // MEMORY VAULT: Deduplicate against the main SQLite database AT THE SOURCE.
+        let db_path = PathBuf::from("harvest_history.db");
+        if db_path.exists() {
+            match get_seen_phones_from_db(&db_path) {
+                Ok(seen_phones) => {
+                    let initial_count = all_contacts.len();
+                    all_contacts.retain(|contact| {
+                        let normalized_phone = normalize_phone(&contact.phone);
+                        !normalized_phone.is_empty() && !seen_phones.contains(&normalized_phone)
+                    });
+                    eprintln!("[Memory Vault] Deduplicated at source: {} fresh contacts remain out of {}.", all_contacts.len(), initial_count);
+                }
+                Err(e) => eprintln!("[Memory Vault] Error: Could not deduplicate from DB at source: {}", e),
             }
         }
 
