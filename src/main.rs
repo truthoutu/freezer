@@ -12,11 +12,18 @@ use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "High speed contact data harvester engine in Rust", long_about = None)]
-#[derive(Parser, Debug)]
 struct Args {
     /// Seed URLs to crawl
     #[arg(short, long, value_delimiter = ',')]
     urls: Vec<String>,
+
+    /// Target occupation
+    #[arg(long, default_value = "Doctor")]
+    occupation: String,
+
+    /// Target country
+    #[arg(long, default_value = "Germany")]
+    country: String,
 
     /// HTML files to parse directly (offline mode)
     #[arg(short, long, value_delimiter = ',')]
@@ -43,27 +50,23 @@ struct Args {
     output: Option<PathBuf>,
 }
 
-    #[tokio::main]
-    async fn main() {
-        // Load environment variables from .env if present (useful on Render)
-        dotenv().ok();
+#[tokio::main]
+async fn main() {
+    dotenv().ok();
 
-        // Initialize logger based on verbosity flag
-        let log_level = match Args::parse().verbose {
-            0 => "info",
-            1 => "debug",
-            _ => "trace",
-        };
-        env::set_var("RUST_LOG", log_level);
-        env_logger::init();
+    let args = Args::parse();
+    let log_level = match args.verbose {
+        0 => "info",
+        1 => "debug",
+        _ => "trace",
+    };
+    env::set_var("RUST_LOG", log_level);
+    env_logger::init();
 
-        let args = Args::parse();
-        info!("Starting Harvester with verbosity level {}", args.verbose);
+    info!("Starting Harvester with verbosity level {}", args.verbose);
     let mut all_contacts: Vec<RawContact> = Vec::new();
-
     let extractor = Extractor::new();
 
-    // 1. Process local HTML files directly if provided
     for file_path in &args.files {
         if let Ok(content) = fs::read_to_string(file_path) {
             let path_str = file_path.to_string_lossy().to_string();
@@ -72,19 +75,18 @@ struct Args {
         }
     }
 
-    // 2. Process web URLs if provided with SOCKS5 Proxy rotation
-    if !args.urls.is_empty() {
-        let config = CrawlerConfig {
-            start_urls: args.urls,
-            max_depth: args.depth,
-            max_concurrency: args.concurrency,
-            proxy_file: args.proxies,
-        };
+    let config = CrawlerConfig {
+        start_urls: args.urls,
+        occupation: Some(args.occupation),
+        country: Some(args.country),
+        max_depth: args.depth,
+        max_concurrency: args.concurrency,
+        proxy_file: args.proxies,
+    };
 
-        let crawler = Crawler::new(config);
-        let crawled_contacts = crawler.run().await;
-        all_contacts.extend(crawled_contacts);
-    }
+    let mut crawler = Crawler::new(config).await;
+    let crawled_contacts = crawler.run().await;
+    all_contacts.extend(crawled_contacts);
 
     let json_output = serde_json::to_string_pretty(&all_contacts).unwrap_or_else(|_| "[]".to_string());
 

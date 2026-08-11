@@ -133,4 +133,24 @@ impl Extractor {
 
         None
     }
+
+    pub fn extract_links(&self, html_content: &str, base_url: &str) -> Vec<String> {
+        let mut links = Vec::new();
+        let document = scraper::Html::parse_document(html_content);
+        let selector = scraper::Selector::parse("a[href]").unwrap();
+
+        for element in document.select(&selector) {
+            if let Some(href) = element.value().attr("href") {
+                if href.starts_with("http://") || href.starts_with("https://") {
+                    links.push(href.to_string());
+                } else if href.starts_with('/') {
+                    if let Ok(parsed_base) = url::Url::parse(base_url) {
+                        let domain = format!("{}://{}", parsed_base.scheme(), parsed_base.host_str().unwrap_or(""));
+                        links.push(format!("{}{}", domain, href));
+                    }
+                }
+            }
+        }
+        links
+    }
 }
