@@ -3,6 +3,7 @@ Production-Hardened Web Server & REST API for 'The Harvester' Dashboard
 Includes session isolation, schema validation, rate limiting, input whitelisting, SQLite persistence, and multi-tier AI fallback.
 """
 
+import concurrent.futures
 import json
 import logging
 import os
@@ -218,42 +219,70 @@ def _get_target_urls(session_id: str, country: str, occupation: str, custom_urls
 
 
 def _fetch_content_firecrawl(session_id: str, target_urls: list, api_key: str) -> list[str]:
-    """Fetch web content using the Firecrawl API."""
+    """Fetch web content concurrently using Firecrawl API across parallel threads."""
     if not (api_key and Firecrawl and target_urls):
         return []
     
-    logger.info(f"[{session_id}] 🚀 Firecrawl: Scraping target URLs...")
+    logger.info(f"[{session_id}] 🚀 Firecrawl Parallel Engine: Scraping {len(target_urls[:5])} URLs concurrently...")
     crawled_content = []
-    try:
-        firecrawl_client = Firecrawl(api_key=api_key)
-        for url in target_urls[:2]:
-            try:
-                result = firecrawl_client.scrape(url=url, formats=["markdown"], only_main_content=True)
-                if result and hasattr(result, 'markdown') and result.markdown:
-                    crawled_content.append(result.markdown[:15000])
-                    logger.info(f"[{session_id}] ✅ Firecrawl scraped: {url}")
-            except Exception as e:
-                logger.warning(f"[{session_id}] Firecrawl notice for {url}: {e}")
-    except Exception as e:
-        logger.error(f"[{session_id}] Firecrawl client error: {e}")
+    
+    def _scrape_single(url: str):
+        try:
+            client = Firecrawl(api_key=api_key)
+            result = client.scrape(url=url, formats=["markdown"], only_main_content=True)
+            if result and hasattr(result, 'markdown') and result.markdown:
+                logger.info(f"[{session_id}] ✅ Firecrawl scraped: {url} ({len(result.markdown)} chars)")
+                return result.markdown[:15000]
+        except Exception as e:
+            logger.warning(f"[{session_id}] Firecrawl notice for {url}: {e}")
+        return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(_scrape_single, u) for u in target_urls[:5]]
+        for f in concurrent.futures.as_completed(futures):
+            res = f.result()
+            if res:
+                crawled_content.append(res)
+
     return crawled_content
 
 
 def _fetch_content_direct(session_id: str, target_urls: list) -> list[str]:
-    """Fallback to fetch web content using direct HTTP requests."""
-    logger.info(f"[{session_id}] 🌐 Direct HTTP Fallback: Fetching live target web pages...")
+    """Fetch web content using parallel HTTP requests with proxy rotation."""
+    logger.info(f"[{session_id}] 🌐 Direct HTTP Parallel Engine: Fetching {len(target_urls[:5])} pages concurrently...")
     import requests
     crawled_content = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     
-    for url in target_urls[:3]:
+    proxies_list = []
+    if PROXIES_FILE_PATH.exists():
         try:
-            resp = requests.get(url, headers=headers, timeout=8)
+            for l in PROXIES_FILE_PATH.read_text().splitlines():
+                parts = l.strip().split(":")
+                if len(parts) == 4:
+                    p_str = f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}"
+                    proxies_list.append({"http": p_str, "https": p_str})
+        except Exception:
+            pass
+
+    def _fetch_single(idx: int, url: str):
+        try:
+            p_dict = proxies_list[idx % len(proxies_list)] if proxies_list else None
+            resp = requests.get(url, headers=headers, proxies=p_dict, timeout=6)
             if resp.status_code == 200 and len(resp.text) > 300:
-                crawled_content.append(resp.text[:20000])
                 logger.info(f"[{session_id}] ✅ Direct HTTP fetched: {url} ({len(resp.text)} chars)")
+                return resp.text[:20000]
         except Exception as e:
             logger.warning(f"[{session_id}] Direct fetch notice for {url}: {e}")
+        return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(_fetch_single, i, u) for i, u in enumerate(target_urls[:5])]
+        for f in concurrent.futures.as_completed(futures):
+            res = f.result()
+            if res:
+                crawled_content.append(res)
+
     return crawled_content
 
 
@@ -412,14 +441,14 @@ Web Page Content:
     
     # STEP 5: Process and Return Results
     if not extracted_records:
-        logger.error(f"[{session_id}] ❌ All extraction methods failed")
+        logger.info(f"[{session_id}] ℹ️ Harvest query completed with 0 matching contacts.")
         return jsonify({
-            "success": False,
-            "error": f"No contacts found for '{occupation}' in {country}. Try different filters or check back later.",
+            "success": True,
+            "message": f"No valid contact numbers found for '{occupation}' in {country}. Try choosing another profession or country.",
             "session_id": session_id,
             "count": 0,
             "records": []
-        }), 404
+        }), 200
 
     # Enforce Schema & Verbatim Scrape Validation
     validated_records = enforce_contact_schema(extracted_records, country, occupation, gender, raw_web_text=combined_content)
