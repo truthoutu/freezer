@@ -63,12 +63,22 @@ document.addEventListener("DOMContentLoaded", () => {
                     exportCsvBtn.disabled = true;
                 }
             } else {
-                resultsStats.textContent = `Error: ${data.error || "Failed to harvest contacts."}`;
-                contactsTbody.innerHTML = `<tr class="empty-row"><td colspan="7">Error: ${escapeHtml(data.error || "")}</td></tr>`;
+                resultsStats.textContent = `Notice: ${data.message || data.error || "No contacts harvested."}`;
+                renderContacts([]);
             }
         } catch (err) {
-            resultsStats.textContent = `Connection failed. ${err.message}`;
-            contactsTbody.innerHTML = `<tr class="empty-row"><td colspan="7">Connection failed. Check your internet and try again.</td></tr>`;
+            console.error("Harvest fetch error:", err);
+            resultsStats.textContent = `Harvest notice: ${err.message || "Connection timeout"}.`;
+            contactsTbody.innerHTML = `
+                <tr class="empty-row">
+                    <td colspan="7">
+                        <div style="padding: 1.5rem; text-align: center;">
+                            <p style="margin-bottom: 0.5rem; font-weight: 600; color: #f59e0b;">⚠️ Connection or Timeout Notice</p>
+                            <p style="font-size: 0.9rem; color: #94a3b8;">The server took longer than expected or is spinning up. Please click <strong>Start Harvesting</strong> again.</p>
+                        </div>
+                    </td>
+                </tr>
+            `;
         } finally {
             searchBtn.disabled = false;
             btnText.textContent = `[LIGHTNING] Start Harvesting ${limit} Targets`;
