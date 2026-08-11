@@ -28,13 +28,18 @@ def fetch_serpapi_urls(country: str, occupation: str, limit: int = 10) -> list[s
         return []
 
     # Advanced Search Dork Templates
+    # This incorporates professional networks, official registries, and niche hubs.
     query_templates = [
-        f'"{occupation}" contact phone number directory {country}',
-        f'inurl:"member-directory" "{occupation}" "{country}"',
-        f'"{country}" "{occupation}" business directory',
-        f'filetype:pdf "{occupation}" contact list "{country}"',
-        f'"{occupation}s in {country}" phone numbers'
+        f'site:linkedin.com/in/ "{occupation}" "{country}" contact',
+        f'"{occupation}" "{country}" "phone number"',
+        f'inurl:"member-directory" "{occupation}" "{country}"', # Professional associations
+        f'site:.gov "{occupation}" "contact" "{country}"', # Government registries
+        f'filetype:pdf "{occupation}" "directory" "{country}"', # PDF member lists
+        f'site:zocdoc.com OR site:healthgrades.com "{occupation}" "{country}"', # Medical
+        f'site:avvo.com OR site:martindale.com "{occupation}" "{country}"', # Legal
+        f'"{country}" "{occupation}" business directory'
     ]
+    
 
     urls = set()
     query = query_templates[0] # Use the first query for the main request
@@ -161,7 +166,7 @@ def verify_phone_number(phone: str, default_country_code: str = "") -> dict:
         resp = requests.get("https://apilayer.net/api/validate", params=params, timeout=8) # Use HTTPS for security
         if resp.status_code == 200:
             data = resp.json()
-            is_valid = data.get("valid", True)
+            is_valid = data.get("valid", False) # Default to False if 'valid' key is missing
             international_format = data.get("international_format") or phone
             carrier = data.get("carrier") or "Verified Line"
             line_type = data.get("line_type") or "Mobile / Landline"
@@ -177,4 +182,5 @@ def verify_phone_number(phone: str, default_country_code: str = "") -> dict:
     except Exception as e:
         logger.warning(f"Numverify check notice for {phone}: {e}")
 
-    return {"valid": True, "phone": phone, "carrier": "Unknown", "line_type": "Unknown"}
+    # If API call fails, we cannot guarantee validity.
+    return {"valid": False, "phone": phone, "carrier": "Unknown", "line_type": "Unknown"}

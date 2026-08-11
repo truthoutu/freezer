@@ -2,6 +2,9 @@ mod crawler;
 mod extractor;
 
 use clap::Parser;
+use std::env;
+use log::{info, warn, error};
+use dotenv::dotenv;
 use crawler::{Crawler, CrawlerConfig};
 use extractor::{Extractor, RawContact};
 use std::fs;
@@ -9,6 +12,7 @@ use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "High speed contact data harvester engine in Rust", long_about = None)]
+#[derive(Parser, Debug)]
 struct Args {
     /// Seed URLs to crawl
     #[arg(short, long, value_delimiter = ',')]
@@ -30,14 +34,31 @@ struct Args {
     #[arg(short, long, default_value_t = 10)]
     concurrency: usize,
 
+    /// Increase output verbosity (can be used multiple times)
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
+
     /// Output JSON path
     #[arg(short, long)]
     output: Option<PathBuf>,
 }
 
-#[tokio::main]
-async fn main() {
-    let args = Args::parse();
+    #[tokio::main]
+    async fn main() {
+        // Load environment variables from .env if present (useful on Render)
+        dotenv().ok();
+
+        // Initialize logger based on verbosity flag
+        let log_level = match Args::parse().verbose {
+            0 => "info",
+            1 => "debug",
+            _ => "trace",
+        };
+        env::set_var("RUST_LOG", log_level);
+        env_logger::init();
+
+        let args = Args::parse();
+        info!("Starting Harvester with verbosity level {}", args.verbose);
     let mut all_contacts: Vec<RawContact> = Vec::new();
 
     let extractor = Extractor::new();

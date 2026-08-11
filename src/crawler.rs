@@ -35,9 +35,37 @@ impl ProxyInfo {
 
 pub struct CrawlerConfig {
     pub start_urls: Vec<String>,
+    pub occupation: Option<String>,
+    pub country: Option<String>,
     pub max_depth: usize,
     pub max_concurrency: usize,
     pub proxy_file: Option<PathBuf>,
+}
+
+/// Generates a diverse set of Google search dorks for a given occupation and country.
+fn generate_dynamic_queries(occupation: &str, country: &str) -> Vec<String> {
+    let occupation_query = format!("\"{}\"", occupation);
+    let country_query = format!("\"{}\"", country);
+
+    let query_templates = vec![
+        // Professional Registries
+        format!("site:.org OR site:.gov {occupation_query} {country_query} member directory OR registry"),
+        format!("intitle:\"member list\" OR inurl:\"registry\" {occupation_query} {country_query}"),
+        format!("(site:*.med.pro OR site:*.legal.pro) {occupation_query} {country_query}"), // Example TLDs
+
+        // Niche Platforms
+        format!("site:clutch.co OR site:thumbtack.com OR site:bark.com {occupation_query} {country_query} contact"),
+
+        // Corporate Engines
+        format!("site:crunchbase.com OR site:angel.co {occupation_query} {country_query} people"),
+
+        // Local Aggregators
+        format!("site:yelp.com OR site:hotfrog.com {occupation_query} {country_query}"),
+    ];
+
+    query_templates.into_iter().map(|q| {
+        format!("https://www.google.com/search?q={}", urlencoding::encode(&q))
+    }).collect()
 }
 
 pub struct Crawler {
@@ -86,32 +114,44 @@ impl Crawler {
         let (tx, mut rx) = mpsc::channel::<(String, usize)>(1000);
         let (contact_tx, mut contact_rx) = mpsc::channel::<Vec<RawContact>>(1000);
 
+        // Generate dynamic search queries if occupation and country are provided
+        let initial_urls = if let (Some(occ), Some(country)) = (&self.config.occupation, &self.config.country) {
+            generate_dynamic_queries(occ, country)
+        } else {
+            self.config.start_urls.clone()
+        };
+
         // This HashSet is now local to the run method, which is cleaner.
         let mut visited = std::collections::HashSet::new();
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrency));
 
-        for url in &self.config.start_urls {
-            if visited.insert(url.clone()) {
-                let _ = tx.send((url.clone(), 0)).await;
-            }
+        for url in &initial_urls {
+            let _ = tx.send((url.clone(), 0)).await;
         }
 
         let extractor = Arc::new(Extractor::new());
         let max_depth = self.config.max_depth;
         let proxies = self.proxies.clone();
         let user_agents = self.user_agents.clone();
+        let visited = Arc::new(tokio::sync::Mutex::new(visited));
 
         tokio::spawn(async move {
             while let Some((url_str, depth)) = rx.recv().await {
-                if depth > max_depth {
-                    continue;
-                }
 
                 let sem = semaphore.clone();
                 let extractor_clone = extractor.clone();
                 let contact_tx_clone = contact_tx.clone();
                 let tx_clone = tx.clone(); // Clone sender for recursive crawling
                 let user_agents_clone = user_agents.clone();
+
+                // CRITICAL FIX: Check if visited *before* spawning the task.
+                // This prevents re-crawling and potential infinite loops.
+                let mut visited_guard = visited.lock().await;
+                if !visited_guard.insert(url_str.clone()) || depth > max_depth {
+                    continue;
+                }
+                // Drop the guard to avoid holding the lock inside the spawned task
+                drop(visited_guard);
 
                 // Pick random proxy if available
                 let proxy_choice = if !proxies.is_empty() {

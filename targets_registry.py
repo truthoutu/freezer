@@ -108,6 +108,13 @@ def get_default_sources(country: str, occupation: str) -> list[str]:
         for region in _geocode_location("United Kingdom", "United Kingdom"):
             urls.append(f"https://www.yell.com/ucs/UcsSearchAction.do?keywords={encoded_kw}&location={urllib.parse.quote(region)}")
 
+    elif country == "France":
+        local_kw = OCCUPATION_MAPS["French"].get(occ_lower, occ_clean)
+        encoded_kw = quote_plus(local_kw)
+
+        for region in _geocode_location("France", "France"):
+            urls.append(f"https://www.pagesjaunes.fr/annuaire/chercherlespros?quo_qui={encoded_kw}&ou={urllib.parse.quote(region)}")
+
     else:
         encoded_kw = quote_plus(occ_clean)
         encoded_country = quote_plus(country)

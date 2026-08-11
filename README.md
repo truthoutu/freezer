@@ -10,9 +10,18 @@ A free, production-grade, high-concurrency hybrid data extraction and contact in
 graph TD
     A["Client Web UI (http://localhost:5000)"] --> B["Flask REST API Server (server.py)"]
     B --> C["GET /api/health Monitoring"]
-    B --> D["POST /api/harvest Request"]
-    D --> E["Firecrawl API - Anti-bot bypass & scraping"]
-    E --> F["Cerebras AI - Ultra-fast contact extraction"]
+    B --> D["POST /api/harvest"]
+    
+    subgraph "Primary Pipeline: AI Extraction"
+        D --> E["Firecrawl API - Anti-bot scraping"]
+        E --> F["Cerebras AI - Ultra-fast contact extraction"]
+    end
+
+    D --> RUST["Rust Fallback Engine"]
+    RUST --> RUST_GEN["Dynamic Query Generation (Google Dorks)"]
+    RUST_GEN --> RUST_CRAWL["Async Crawler (tokio)"]
+    RUST_CRAWL --> F
+    
     F --> G["Contact Normalization & Validation"]
     G --> H["Clean CSV & Excel Reports (.xlsx / .csv)"]
     G --> I["Interactive Dashboard Table View"]

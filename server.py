@@ -18,7 +18,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 import pandas as pd
 
 from cleaner import CleanerPipeline
-from db import get_harvest_history, init_db, save_harvest_run
+from db import get_harvest_history, save_harvest_run
 from targets_registry import get_default_sources, MAJOR_CITIES
 from external_apis import fetch_serpapi_urls, verify_phone_number, fetch_duckduckgo_urls
 
@@ -43,7 +43,7 @@ RAW_JSON_PATH = PROJECT_ROOT / "web_harvest_raw.json"
 PROXIES_FILE_PATH = PROJECT_ROOT / "proxies.txt"
 
 # Whitelists & Rate Limiting
-ALLOWED_COUNTRIES = ["Germany", "Switzerland", "Australia", "United States", "Canada"]
+ALLOWED_COUNTRIES = ["Germany", "Switzerland", "Australia", "United States", "Canada", "France"]
 RATE_LIMIT_STORE = defaultdict(list)
 RATE_LIMIT_WINDOW = 60  # seconds
 MAX_REQUESTS_PER_WINDOW = 20
@@ -63,8 +63,6 @@ try:
     from firecrawl import Firecrawl
 except ImportError:
     Firecrawl = None
-
-init_db()
 
 
 def check_rate_limit(client_ip: str) -> bool:
@@ -172,6 +170,96 @@ def get_history():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+def _get_target_urls(session_id: str, country: str, occupation: str, custom_urls: list) -> list[str]:
+    """Determine the final list of URLs to be scraped."""
+    if custom_urls and isinstance(custom_urls, list) and len(custom_urls) > 0:
+        target_urls = [url for url in custom_urls if url.startswith('http')]
+        logger.info(f"[{session_id}] Using {len(target_urls)} custom URLs provided by user")
+        return target_urls
+
+    serp_urls = fetch_serpapi_urls(country, occupation, limit=3)
+    if not serp_urls:
+        logger.info(f"[{session_id}] SerpAPI not used, trying DuckDuckGo search fallback...")
+        serp_urls = fetch_duckduckgo_urls(country, occupation, MAJOR_CITIES.get(country, []), limit=3)
+    
+    registry_urls = get_default_sources(country, occupation)
+    target_urls = list(dict.fromkeys(serp_urls + registry_urls))
+    logger.info(f"[{session_id}] Assembled {len(target_urls)} live target URLs (Discovery: {len(serp_urls)}, Registry: {len(registry_urls)})")
+    return target_urls
+
+
+def _fetch_content_firecrawl(session_id: str, target_urls: list, api_key: str) -> list[str]:
+    """Fetch web content using the Firecrawl API."""
+    if not (api_key and Firecrawl and target_urls):
+        return []
+    
+    logger.info(f"[{session_id}] 🚀 Firecrawl: Scraping target URLs...")
+    crawled_content = []
+    try:
+        firecrawl_client = Firecrawl(api_key=api_key)
+        for url in target_urls[:2]:
+            try:
+                result = firecrawl_client.scrape(url=url, formats=["markdown"], only_main_content=True)
+                if result and hasattr(result, 'markdown') and result.markdown:
+                    crawled_content.append(result.markdown[:15000])
+                    logger.info(f"[{session_id}] ✅ Firecrawl scraped: {url}")
+            except Exception as e:
+                logger.warning(f"[{session_id}] Firecrawl notice for {url}: {e}")
+    except Exception as e:
+        logger.error(f"[{session_id}] Firecrawl client error: {e}")
+    return crawled_content
+
+
+def _fetch_content_direct(session_id: str, target_urls: list) -> list[str]:
+    """Fallback to fetch web content using direct HTTP requests."""
+    logger.info(f"[{session_id}] 🌐 Direct HTTP Fallback: Fetching live target web pages...")
+    import requests
+    crawled_content = []
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    
+    for url in target_urls[:3]:
+        try:
+            resp = requests.get(url, headers=headers, timeout=8)
+            if resp.status_code == 200 and len(resp.text) > 300:
+                crawled_content.append(resp.text[:20000])
+                logger.info(f"[{session_id}] ✅ Direct HTTP fetched: {url} ({len(resp.text)} chars)")
+        except Exception as e:
+            logger.warning(f"[{session_id}] Direct fetch notice for {url}: {e}")
+    return crawled_content
+
+
+def _extract_with_rust_fallback(session_id: str, country: str, occupation: str, gender: str) -> list[dict]:
+    """Use the compiled Rust engine as a final fallback for extraction."""
+    logger.info(f"[{session_id}] 🔧 Rust Fallback: Delegating dynamic query generation and extraction...")
+
+    rust_binary = PROJECT_ROOT / "target" / "release" / "harvester.exe"
+    cmd = [str(rust_binary)] if rust_binary.exists() else ["cargo", "run", "--release", "--"]
+    
+    # Pass occupation and country to Rust for dynamic query generation
+    cmd.extend(["--occupation", occupation, "--country", country])
+    
+    if PROXIES_FILE_PATH.exists():
+        cmd.extend(["--proxies", str(PROXIES_FILE_PATH)])
+        
+    cmd.extend(["--depth", "1", "--concurrency", "5", "--output", str(RAW_JSON_PATH)])
+    
+    try:
+        result = subprocess.run(cmd, cwd=PROJECT_ROOT, timeout=60, capture_output=True, text=True)
+        if result.returncode == 0:
+            cleaner = CleanerPipeline(RAW_JSON_PATH)
+            if cleaner.load_data():
+                df_fallback = cleaner.clean(target_occupation=occupation, filter_gender=gender, filter_country=country)
+                records = df_fallback.to_dict(orient="records")
+                logger.info(f"[{session_id}] 🔧 Rust fallback extracted {len(records)} contacts")
+                return records
+        else:
+            logger.error(f"[{session_id}] Rust harvester failed: {result.stderr}")
+    except Exception as e:
+        logger.error(f"[{session_id}] Rust harvester error: {e}")
+    
+    return []
+
+
 @app.route("/api/harvest", methods=["POST"])
 def api_harvest():
     client_ip = request.remote_addr or "127.0.0.1"
@@ -209,79 +297,19 @@ def api_harvest():
     cerebras_key = os.getenv("CEREBRAS_API_KEY", "").strip()
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
 
-    logger.info(f"[{session_id}] Harvest request: Country='{country}', Occupation='{occupation}', Gender='{gender}', Limit={limit}")
+    logger.info(f"[{session_id}] Harvest request: C='{country}', O='{occupation}', G='{gender}', L={limit}")
 
-    extracted_records = []
+    # STEP 1: Get Target URLs
+    target_urls = _get_target_urls(session_id, country, occupation, data.get("custom_urls", []))
     
-    # SPEED-OPTIMIZED PIPELINE: Firecrawl → Cerebras → Results
+    # STEP 2: Web Content Retrieval (Firecrawl -> Direct HTTP Fallback)
     firecrawl_key = os.getenv("FIRECRAWL_API_KEY", "").strip()
-    
-    # Get target URLs (custom URLs take priority)
-    custom_urls = data.get("custom_urls", [])
-    if custom_urls and isinstance(custom_urls, list) and len(custom_urls) > 0:
-        # Use user-provided URLs
-        target_urls = [url for url in custom_urls if url.startswith('http')]
-        logger.info(f"[{session_id}] Using {len(target_urls)} custom URLs provided by user")
-    else:
-        # Query SerpAPI Google Search Dorking for live target URLs
-        serp_urls = fetch_serpapi_urls(country, occupation, limit=3)
-        # Fallback to free DuckDuckGo search if SerpAPI is not configured or fails
-        if not serp_urls:
-            logger.info(f"[{session_id}] SerpAPI not used, trying DuckDuckGo search fallback...")
-            serp_urls = fetch_duckduckgo_urls(country, occupation, MAJOR_CITIES.get(country, []), limit=3)
-        registry_urls = get_default_sources(country, occupation)
-        target_urls = list(dict.fromkeys(serp_urls + registry_urls))
-        logger.info(f"[{session_id}] Assembled {len(target_urls)} live target URLs (SerpAPI: {len(serp_urls)}, Registry: {len(registry_urls)})")
-    
-    # STEP 1: Web Content Retrieval (Firecrawl -> Direct HTTP Fallback)
-    crawled_content = []
-    if firecrawl_key and Firecrawl and target_urls:
-        logger.info(f"[{session_id}] 🚀 Firecrawl: Scraping target URLs...")
-        try:
-            firecrawl_client = Firecrawl(api_key=firecrawl_key)
-            for url in target_urls[:2]:
-                try:
-                    result = firecrawl_client.scrape(
-                        url=url,
-                        formats=["markdown"],
-                        only_main_content=True
-                    )
-                    if result and hasattr(result, 'markdown') and result.markdown:
-                        crawled_content.append(result.markdown[:15000])
-                        logger.info(f"[{session_id}] ✅ Firecrawl scraped: {url}")
-                except Exception as e:
-                    logger.warning(f"[{session_id}] Firecrawl notice for {url}: {e}")
-                    break
-        except Exception as e:
-            logger.error(f"[{session_id}] Firecrawl client error: {e}")
-
-    # Fallback to Direct HTTP fetch if Firecrawl returned 0 content
+    crawled_content = _fetch_content_firecrawl(session_id, target_urls, firecrawl_key)
     if not crawled_content and target_urls:
-        logger.info(f"[{session_id}] 🌐 Direct HTTP Fallback: Fetching live target web pages...")
-        import requests
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-        proxies_dict = None
-        if PROXIES_FILE_PATH.exists():
-            try:
-                lines = [l.strip() for l in PROXIES_FILE_PATH.read_text().splitlines() if l.strip()]
-                if lines:
-                    parts = lines[0].split(":")
-                    if len(parts) == 4:
-                        p_str = f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}"
-                        proxies_dict = {"http": p_str, "https": p_str}
-            except Exception:
-                pass
-
-        for url in target_urls[:3]:
-            try:
-                resp = requests.get(url, headers=headers, proxies=proxies_dict, timeout=8)
-                if resp.status_code == 200 and len(resp.text) > 300:
-                    crawled_content.append(resp.text[:20000])
-                    logger.info(f"[{session_id}] ✅ Direct HTTP fetched: {url} ({len(resp.text)} chars)")
-            except Exception as e:
-                logger.warning(f"[{session_id}] Direct fetch notice for {url}: {e}")
+        crawled_content = _fetch_content_direct(session_id, target_urls)
     
-    # STEP 2: Cerebras AI - Ultra-fast extraction (SECONDS)
+    # STEP 3: AI Extraction (Cerebras -> Groq)
+    extracted_records = []
     combined_content = "\n\n---PAGE BREAK---\n\n".join(crawled_content) if crawled_content else ""
     
     if cerebras_key and Cerebras:
@@ -322,7 +350,7 @@ Web Page Content:
                 logger.error(f"[{session_id}] Cerebras model {model_name} failed: {e}")
     
     # If Cerebras failed, try Groq (still fast)
-    if not extracted_records and groq_key and Groq:
+    if not extracted_records and groq_key and Groq and combined_content:
         logger.info(f"[{session_id}] 🧠 Groq: Backup extraction...")
         try:
             client = Groq(api_key=groq_key)
@@ -340,38 +368,11 @@ Web Page Content:
         except Exception as e:
             logger.error(f"[{session_id}] Groq error: {e}")
     
-    # If both AI engines failed, try Rust fallback
+    # STEP 4: Rust Fallback
     if not extracted_records:
-        logger.info(f"[{session_id}] ⚡ AI engines failed, trying Rust fallback...")
-        target_urls = get_default_sources(country, occupation)
-        if target_urls:
-            rust_binary = PROJECT_ROOT / "target" / "release" / "harvester.exe"
-            # Use compiled binary directly if it exists, otherwise use cargo run
-            if rust_binary.exists():
-                cmd = [str(rust_binary)]
-            else:
-                cmd = ["cargo", "run", "--release", "--"]
-            cmd.extend(["--urls", ",".join(target_urls)])
-            
-            if PROXIES_FILE_PATH.exists():
-                cmd.extend(["--proxies", str(PROXIES_FILE_PATH)])
-                
-            cmd.extend(["--depth", "1", "--concurrency", "5", "--output", str(RAW_JSON_PATH)])
-            
-            try:
-                result = subprocess.run(cmd, cwd=PROJECT_ROOT, timeout=60, capture_output=True, text=True)
-                if result.returncode == 0:
-                    cleaner = CleanerPipeline(RAW_JSON_PATH)
-                    if cleaner.load_data():
-                        df_fallback = cleaner.clean(target_occupation=occupation, filter_gender=gender, filter_country=country)
-                        extracted_records = df_fallback.to_dict(orient="records")
-                        logger.info(f"[{session_id}] 🔧 Rust fallback extracted {len(extracted_records)} contacts")
-                else:
-                    logger.error(f"[{session_id}] Rust harvester failed: {result.stderr}")
-            except Exception as e:
-                logger.error(f"[{session_id}] Rust harvester error: {e}")
+        extracted_records = _extract_with_rust_fallback(session_id, country, occupation, gender)
     
-    # If still no contacts, return error
+    # STEP 5: Process and Return Results
     if not extracted_records:
         logger.error(f"[{session_id}] ❌ All extraction methods failed")
         return jsonify({
