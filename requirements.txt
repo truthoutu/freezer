@@ -8,3 +8,5 @@ cerebras-cloud-sdk>=1.0.0
 gunicorn>=21.2.0
 requests>=2.31.0
 firecrawl-py>=0.0.16
+tavily-python>=0.3.0
+

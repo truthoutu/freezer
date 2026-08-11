@@ -21,7 +21,7 @@ import pandas as pd
 from cleaner import CleanerPipeline
 from db import get_harvest_history, save_harvest_run
 from targets_registry import get_default_sources
-from external_apis import fetch_serpapi_urls, verify_phone_number, fetch_duckduckgo_urls, validate_api_keys
+from external_apis import fetch_serpapi_urls, verify_phone_number, fetch_duckduckgo_urls, validate_api_keys, fetch_tavily_content
 
 load_dotenv()
 
@@ -360,9 +360,15 @@ def api_harvest():
     # STEP 1: Get Target URLs
     target_urls = _get_target_urls(session_id, country, occupation, data.get("custom_urls", []))
     
-    # STEP 2: Web Content Retrieval (Firecrawl -> Direct HTTP Fallback)
+    # STEP 2: Thorough Web Content Retrieval (Firecrawl -> Tavily -> Direct HTTP Fallback)
     firecrawl_key = os.getenv("FIRECRAWL_API_KEY", "").strip()
     crawled_content = _fetch_content_firecrawl(session_id, target_urls, firecrawl_key)
+
+    # Tavily Deep AI Web Search Integration
+    tavily_content = fetch_tavily_content(country, occupation, limit=5)
+    if tavily_content:
+        crawled_content.extend(tavily_content)
+
     if not crawled_content and target_urls:
         crawled_content = _fetch_content_direct(session_id, target_urls)
     

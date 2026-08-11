@@ -16,6 +16,48 @@ logger = logging.getLogger("ExternalAPIs")
 
 SERPAPI_KEY = os.getenv("SERPAPI_KEY", "").strip()
 NUMVERIFY_KEY = os.getenv("NUMVERIFY_KEY", "").strip()
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
+
+
+def fetch_tavily_content(country: str, occupation: str, limit: int = 5) -> list[str]:
+    """
+    Query Tavily AI Search API for deep web scraping of real contact directories.
+    Returns raw scraped markdown/content strings.
+    """
+    if not TAVILY_API_KEY:
+        logger.info("Tavily: TAVILY_API_KEY not configured. Skipping Tavily deep web search.")
+        return []
+
+    query = f"Real verified {occupation} directory contact phone numbers in {country}"
+    logger.info(f"Tavily: Performing deep AI web search for '{query}'...")
+    
+    payload = {
+        "api_key": TAVILY_API_KEY,
+        "query": query,
+        "search_depth": "advanced",
+        "include_answer": True,
+        "include_raw_content": True,
+        "max_results": limit
+    }
+
+    try:
+        resp = requests.post("https://api.tavily.com/search", json=payload, timeout=20)
+        if resp.status_code == 200:
+            data = resp.json()
+            results = data.get("results", [])
+            contents = []
+            for r in results:
+                raw_c = r.get("raw_content") or r.get("content") or ""
+                if len(raw_c) > 200:
+                    contents.append(raw_c[:25000])
+            logger.info(f"Tavily successfully scraped {len(contents)} deep web content pages.")
+            return contents
+        else:
+            logger.warning(f"Tavily error: HTTP {resp.status_code} - {resp.text[:150]}")
+    except Exception as e:
+        logger.error(f"Tavily search request failed: {e}")
+
+    return []
 
 
 def validate_api_keys():
